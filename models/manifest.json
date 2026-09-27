@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "description": "EmotionEdge model registry (blueprint 'Model Registry'). Files live next to this manifest; fetch them with models/fetch_models.py. The runtime verifies size and SHA-256 before loading. An empty sha256 is pinned on first fetch (fetch_models.py --pin). Check every license before shipping: NLLB-200 weights are non-commercial (CC-BY-NC-4.0).",
+  "models": [
+    {
+      "id": "vad.silero.v6",
+      "task": "vad",
+      "format": "onnx",
+      "path": "vad/silero_vad.onnx",
+      "sha256": "",
+      "languages": ["*"],
+      "devices": ["cpu"],
+      "precision": "fp32",
+      "license": "MIT",
+      "source": "https://github.com/snakers4/silero-vad/raw/v6.2.3/src/silero_vad/data/silero_vad.onnx"
+    },
+    {
+      "id": "asr.whisper.base.q5_1",
+      "task": "asr",
+      "format": "ggml",
+      "path": "asr/ggml-base-q5_1.bin",
+      "sha256": "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+      "bytes": 59707625,
+      "languages": ["*"],
+      "devices": ["cpu", "cuda"],
+      "precision": "q5_1",
+      "license": "MIT",
+      "source": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin"
+    },
+    {
+      "id": "mt.nllb200.distilled600m.int8",
+      "task": "mt",
+      "format": "ct2",
+      "path": "mt/nllb-200-distilled-600M-int8",
+      "check_file": "model.bin",
+      "sha256": "",
+      "languages": ["*"],
+      "devices": ["cpu", "cuda"],
+      "precision": "int8",
+      "license": "CC-BY-NC-4.0 (non-commercial)",
+      "source": "convert:ml/export/convert_nllb_ct2.sh"
+    },
+    {
+      "id": "tts.piper.hi_IN.pratham.medium",
+      "task": "tts",
+      "format": "piper",
+      "path": "tts/hi_IN-pratham-medium.onnx",
+      "sha256": "169964b0871667f6793416d4b35e97357a68ba1ad01df8580c28048989ee7693",
+      "bytes": 63516050,
+      "languages": ["hi"],
+      "devices": ["cpu"],
+      "precision": "fp32",
+      "license": "see MODEL_CARD in rhasspy/piper-voices",
+      "source": "https://huggingface.co/rhasspy/piper-voices/resolve/main/hi/hi_IN/pratham/medium/hi_IN-pratham-medium.onnx",
+      "sidecars": ["https://huggingface.co/rhasspy/piper-voices/resolve/main/hi/hi_IN/pratham/medium/hi_IN-pratham-medium.onnx.json"]
+    },
+    {
+      "id": "tts.piper.en_US.lessac.medium",
+      "task": "tts",
+      "format": "piper",
+      "path": "tts/en_US-lessac-medium.onnx",
+      "sha256": "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f",
+      "bytes": 63201294,
+      "languages": ["en"],
+      "devices": ["cpu"],
+      "precision": "fp32",
+      "license": "see MODEL_CARD in rhasspy/piper-voices",
+      "source": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
+      "sidecars": ["https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"]
+    }
+  ],
+  "device_profiles": {
+    "cpu": { "execution_providers": ["cpu"], "threads": 4, "precision": "int8" },
+    "cuda": { "execution_providers": ["cuda", "cpu"], "threads": 2, "precision": "fp16" },
+    "tensorrt": { "execution_providers": ["tensorrt", "cuda", "cpu"], "threads": 2, "precision": "fp16" },
+    "npu": { "execution_providers": ["openvino", "cpu"], "threads": 2, "precision": "int8" },
+    "apple": { "execution_providers": ["coreml", "cpu"], "threads": 2, "precision": "fp16" },
+    "android": { "execution_providers": ["nnapi", "xnnpack", "cpu"], "threads": 2, "precision": "int8" }
+  },
+  "language_packs": {
+    "en-hi": {
+      "vad": "vad.silero.v6",
+      "asr": "asr.whisper.base.q5_1",
+      "mt": "mt.nllb200.distilled600m.int8",
+      "tts": "tts.piper.hi_IN.pratham.medium"
+    },
+    "hi-en": {
+      "vad": "vad.silero.v6",
+      "asr": "asr.whisper.base.q5_1",
+      "mt": "mt.nllb200.distilled600m.int8",
+      "tts": "tts.piper.en_US.lessac.medium"
+    }
+  }
+}

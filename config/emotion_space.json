@@ -1,0 +1,16 @@
+{
+  "description": "Shared V·A·D emotion space (blueprint p.3). Label prototypes are read off the blueprint's emotion map; the C++ core compiles the same values (core/emotion/emotion_types.hpp) and a test keeps them in sync. The ml/ factory uses this file for labels, ECS and CCC.",
+  "axes": ["valence", "arousal", "dominance"],
+  "range": [-1.0, 1.0],
+  "ecs": "1 - ||VAD_src - VAD_out|| / (2 * sqrt(3))",
+  "ecs_target": 0.75,
+  "prototypes": {
+    "neutral":  [0.00, 0.00, 0.00],
+    "joy":      [0.75, 0.50, 0.35],
+    "surprise": [0.30, 0.80, -0.10],
+    "anger":    [-0.62, 0.78, 0.55],
+    "fear":     [-0.45, 0.50, -0.55],
+    "sadness":  [-0.65, -0.50, -0.35],
+    "calm":     [0.55, -0.45, 0.15]
+  }
+}

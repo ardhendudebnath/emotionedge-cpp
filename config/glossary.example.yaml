@@ -1,0 +1,6 @@
+# Blueprint 3.2 "Glossary / term lock". Terms are replaced with placeholders before MT and put
+# back afterwards. Map a term to its fixed translation, or to null to keep it verbatim.
+# Use it with:  --set translate.glossary=config/glossary.example.yaml
+EmotionEdge: null
+ONNX Runtime: null
+Wi-Fi: वाई-फ़ाई

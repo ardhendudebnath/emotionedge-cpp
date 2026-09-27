@@ -1,0 +1,34 @@
+# Build trees
+/build*/
+/out/
+/cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+/vcpkg_installed/
+
+# IDEs
+/.vs/
+/.vscode/
+/.idea/
+*.swp
+
+# Model files are fetched and verified against models/manifest.json, never committed
+/models/*
+!/models/manifest.json
+!/models/README.md
+!/models/fetch_models.py
+
+# Demo / run outputs
+/out/
+
+# Session outputs
+/sessions/
+*.prom
+*.trace.json
+
+# Python factory
+__pycache__/
+*.pyc
+.venv/
+/ml/runs/
+/ml/artifacts/

@@ -1,0 +1,10 @@
+{
+  "description": "P5 baseline. Latency and ECS come from ee_bench on the stand-in engines (config/pipeline.yaml, 9 utterances, real-time paced, WSL2 x86-64 dev machine). Re-baseline per engine configuration and target hardware with --update-baseline; quality metrics (WER, BLEU, COMET, F1, CCC) join once the phase-1 engines are evaluated on real data.",
+  "metrics": {
+    "end_to_end_p95_ms": 186.4,
+    "asr_rtf_p95": 0.0,
+    "ecs": 0.81,
+    "peak_rss_mb": 53.0,
+    "dropout_samples": 0
+  }
+}

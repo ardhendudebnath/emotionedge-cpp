@@ -1,0 +1,125 @@
+# The Phase-1 "baseline pipe" with real engines: Silero VAD -> whisper.cpp -> NLLB-200
+# (CTranslate2) -> Piper, plus the prosody/lexicon emotion path. Needs a build with
+#   -DEE_WITH_ONNXRUNTIME=ON -DEE_WITH_WHISPER=ON -DEE_WITH_CTRANSLATE2=ON -DEE_WITH_PIPER=ON
+# and the models from models/manifest.json (see models/README.md).
+#
+# Only the parameters that differ from pipeline.yaml's stand-ins are listed; the graph is the same.
+
+pipeline:
+  name: emotionedge-engines
+  source_language: en
+  target_language: hi
+  sample_rate: 16000
+  models: ${config_dir}/../models/manifest.json
+
+telemetry:
+  flush_ms: 1000
+
+threads:
+  - { name: T1-dsp-vad,    core: 1, priority: high }
+  - { name: T2-asr,        core: 2, priority: high }
+  - { name: T3-emotion,    core: 6, priority: high }
+  - { name: T4-understand, core: 7, priority: high }
+  - { name: T5-tts,        core: 8, priority: high }
+  - { name: T6-playback,   core: 9, priority: realtime }
+
+stages:
+  - name: frontend
+    type: frontend
+    thread: T1-dsp-vad
+    tick_ms: 20
+    params: { frame_ms: 20, agc: { enabled: true, target_dbfs: -23 } }
+
+  - name: segmenter
+    type: segmenter
+    thread: T1-dsp-vad
+    params:
+      detector: silero
+      model_id: vad.silero.v6
+      device: cpu
+      hangover_ms: 160
+      preroll_ms: 200
+
+  - name: speaker
+    type: speaker
+    thread: T3-emotion
+    params: { encoder: pitch }
+
+  - name: asr
+    type: asr
+    thread: T2-asr
+    params:
+      engine: whisper
+      model_id: asr.whisper.base.q5_1
+      language: auto          # automatic language ID
+      threads: 4              # blueprint: 4 worker cores
+      beam: 1
+      partial_interval_ms: 500
+      min_partial_ms: 1000
+
+  - name: emotion
+    type: emotion
+    thread: T3-emotion
+    params: { acoustic: prosody, lexical: lexicon }
+
+  - name: state
+    type: state
+    thread: T4-understand
+    tick_ms: 10
+
+  - name: translate
+    type: translate
+    thread: T4-understand
+    params:
+      engine: ct2
+      model_id: mt.nllb200.distilled600m.int8
+      device: cpu
+      compute_type: int8
+      beam: 2
+      threads: 4
+      expressivity: ${config_dir}/expressivity.yaml
+      control_tokens: auto    # vanilla NLLB: tokens are shown in logs but stripped before MT
+
+  - name: controller
+    type: controller
+    thread: T4-understand
+    params: { expressivity: ${config_dir}/expressivity.yaml }
+
+  - name: tts
+    type: tts
+    thread: T5-tts
+    tick_ms: 5
+    params:
+      engine: piper
+      model_id: tts.piper.hi_IN.pratham.medium
+      chunk_ms: 100
+
+  - name: playback
+    type: playback
+    thread: T6-playback
+    tick_ms: 5
+    params: { jitter_ms: 60, crossfade_ms: 5 }
+
+  - name: consistency
+    type: consistency
+    thread: T3-emotion
+    params: { acoustic: prosody, lexical: lexicon, threshold: 0.75 }
+
+  - name: recorder
+    type: recorder
+    thread: T6-playback
+
+edges:
+  - { from: frontend,    to: segmenter, capacity: 256 }
+  - { from: segmenter,   to: [asr, emotion, speaker], kinds: [audio], capacity: 512 }
+  - { from: segmenter,   to: [tts, playback], kinds: [control] }
+  - { from: speaker,     to: tts, kinds: [voiceprint] }
+  - { from: asr,         to: [emotion, state, translate, recorder], kinds: [transcript] }
+  - { from: emotion,     to: state, kinds: [emotion] }
+  - { from: state,       to: [translate, recorder], kinds: [utterance] }
+  - { from: translate,   to: [controller, recorder], kinds: [translation] }
+  - { from: controller,  to: [tts, recorder], kinds: [speech] }
+  - { from: tts,         to: [playback, consistency], kinds: [synthaudio], capacity: 256 }
+  - { from: consistency, to: controller, kinds: [feedback], feedback: true }
+  - { from: consistency, to: recorder, kinds: [feedback] }
+  - { from: playback,    to: recorder, kinds: [playout] }

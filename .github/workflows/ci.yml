@@ -1,0 +1,148 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: linux / ${{ matrix.compiler }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { compiler: gcc, cc: gcc, cxx: g++ }
+          - { compiler: clang, cc: clang, cxx: clang++ }
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 2
+      - name: Demo (blueprint walkthrough + conversation)
+        run: |
+          build/apps/emotionedge demo --out "$RUNNER_TEMP/walkthrough"
+          build/apps/emotionedge demo --conversation --realtime --speed 4 --out "$RUNNER_TEMP/conversation"
+      - name: Latency harness (smoke)
+        run: build/bench/ee_bench --offline --repeat 1 --out "$RUNNER_TEMP/bench"
+
+  windows:
+    name: windows / msvc
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build
+      - name: Build
+        run: cmake --build build --config Release -- /m
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Demo
+        run: build/apps/Release/emotionedge.exe demo --out "$env:RUNNER_TEMP/walkthrough"
+
+  sanitizers:
+    name: linux / sanitizers
+    runs-on: ubuntu-24.04
+    env:
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: AddressSanitizer + UndefinedBehaviorSanitizer
+        run: |
+          cmake --preset asan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF
+          cmake --build build/asan -j 4
+          ctest --test-dir build/asan --output-on-failure -j 2
+      - name: ThreadSanitizer
+        run: |
+          cmake --preset tsan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF
+          cmake --build build/tsan -j 4
+          # TSan cannot map its shadow memory under high-entropy ASLR: disable it for the run.
+          setarch "$(uname -m)" -R ctest --test-dir build/tsan --output-on-failure
+
+  engines:
+    name: linux / engine adapters
+    runs-on: ubuntu-24.04
+    env:
+      ORT_VERSION: 1.30.0
+      CT2_VERSION: 4.8.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages (espeak-ng, SentencePiece, OpenBLAS)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libespeak-ng-dev libsentencepiece-dev libopenblas-dev
+      - name: ONNX Runtime ${{ env.ORT_VERSION }}
+        run: |
+          curl -fsSL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          mkdir -p "$HOME/ort"
+          tar xzf ort.tgz -C "$HOME/ort" --strip-components=1
+      - name: Cache CTranslate2
+        id: ct2-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/ct2
+          key: ct2-${{ env.CT2_VERSION }}-openblas-ruy-ubuntu-24.04
+      - name: Build CTranslate2 ${{ env.CT2_VERSION }}
+        if: steps.ct2-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "v${CT2_VERSION}" --recursive --shallow-submodules \
+            https://github.com/OpenNMT/CTranslate2.git /tmp/ct2
+          cmake -S /tmp/ct2 -B /tmp/ct2/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/ct2" \
+            -DWITH_MKL=OFF -DWITH_OPENBLAS=ON -DWITH_RUY=ON -DOPENMP_RUNTIME=COMP -DBUILD_CLI=OFF
+          cmake --build /tmp/ct2/build -j 4
+          cmake --install /tmp/ct2/build
+      - name: Configure with every adapter
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON \
+            -DEE_WITH_ONNXRUNTIME=ON -DEE_WITH_WHISPER=ON -DEE_WITH_CTRANSLATE2=ON \
+            -DEE_WITH_PIPER=ON -DEE_WITH_MINIAUDIO=ON \
+            -DEE_ONNXRUNTIME_ROOT="$HOME/ort" -DCMAKE_PREFIX_PATH="$HOME/ct2"
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 2
+      - name: CLI
+        run: |
+          build/apps/emotionedge stages
+          build/apps/emotionedge models list
+          build/apps/emotionedge demo --out "$RUNNER_TEMP/walkthrough"
+
+  python:
+    name: ml factory (python)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Unit tests
+        run: python -m unittest discover -s ml/tests -v
+
+  macos:
+    name: macos / apple clang
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j 3
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

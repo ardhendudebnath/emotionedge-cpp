@@ -1,0 +1,27 @@
+# Blueprint 3.3 "Expressivity Profiles": scale emotional intensity and politeness to the target
+# language's speaking norms. The controller (4.1) multiplies its prosody plan by these, and
+# translation (3.2) takes the default register from them.
+#
+# These are v1 placeholders chosen from general prosody literature, NOT measurements. Calibrate
+# them with ECS data and listening tests in the P5 quality gate before relying on them.
+#
+#   intensity     scales the whole plan (1.0 = as planned)
+#   pitch_range   extra scale on pitch-range changes; tonal languages keep it tame (< 1)
+#   rate, energy  extra scale on speaking-rate and loudness changes
+#   register      default control-token register: casual | formal | neutral
+#   length_ratio  target/source words, for wait-k draft budgets
+
+default: { intensity: 1.0, pitch_range: 1.0, rate: 1.0, energy: 1.0, register: casual, length_ratio: 1.0 }
+
+languages:
+  en: { intensity: 1.00 }
+  hi: { intensity: 1.00, register: casual, length_ratio: 1.10 }
+  es: { intensity: 1.10, pitch_range: 1.05, rate: 1.05, length_ratio: 1.15 }
+  it: { intensity: 1.15, pitch_range: 1.10, rate: 1.05, length_ratio: 1.10 }
+  fr: { intensity: 1.00, length_ratio: 1.15 }
+  de: { intensity: 0.90, pitch_range: 0.95 }
+  ja: { intensity: 0.75, pitch_range: 0.85, rate: 0.95, register: formal }
+  ko: { intensity: 0.80, pitch_range: 0.85, register: formal }
+  zh: { intensity: 0.85, pitch_range: 0.70 }  # tonal: pitch carries lexical tone
+  vi: { intensity: 0.85, pitch_range: 0.70 }
+  th: { intensity: 0.85, pitch_range: 0.70 }

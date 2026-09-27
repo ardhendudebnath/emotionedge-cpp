@@ -1,0 +1,68 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" }
+    },
+    {
+      "name": "debug",
+      "inherits": "base",
+      "displayName": "Debug, stub engines, warnings as errors",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "EE_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release, stub engines",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "asan",
+      "inherits": "debug",
+      "displayName": "Debug with AddressSanitizer + UBSan",
+      "cacheVariables": { "EE_SANITIZE": "address,undefined" }
+    },
+    {
+      "name": "tsan",
+      "inherits": "debug",
+      "displayName": "Debug with ThreadSanitizer",
+      "cacheVariables": { "EE_SANITIZE": "thread" }
+    },
+    {
+      "name": "engines",
+      "inherits": "release",
+      "displayName": "Release with every engine adapter (needs ORT, CTranslate2, espeak-ng)",
+      "cacheVariables": {
+        "EE_WITH_ONNXRUNTIME": "ON",
+        "EE_WITH_WHISPER": "ON",
+        "EE_WITH_CTRANSLATE2": "ON",
+        "EE_WITH_PIPER": "ON",
+        "EE_WITH_MINIAUDIO": "ON"
+      }
+    },
+    {
+      "name": "vcpkg",
+      "inherits": "release",
+      "displayName": "Release, dependencies from vcpkg (VCPKG_ROOT)",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": { "EE_FETCH_DEPS": "OFF" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "debug" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "asan", "configurePreset": "asan" },
+    { "name": "tsan", "configurePreset": "tsan" },
+    { "name": "engines", "configurePreset": "engines" }
+  ],
+  "testPresets": [
+    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
+    { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
+    { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
+    { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true } }
+  ]
+}
