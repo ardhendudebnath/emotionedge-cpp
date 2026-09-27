@@ -1,7 +1,9 @@
 #include "core/runtime/onnx.hpp"
 
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <mutex>
 
 #include "core/runtime/log.hpp"
 
@@ -17,6 +19,7 @@ SessionConfig session_config(const Params& params, const ModelRegistry* registry
     }
     if (const auto providers = params.list("providers"); !providers.empty()) cfg.providers = providers;
     cfg.intra_threads = static_cast<int>(params.integer("threads", cfg.intra_threads));
+    cfg.spin = params.flag("spin", cfg.spin);
     return cfg;
 }
 
@@ -61,6 +64,8 @@ Ort::Session load_session(const std::string& path, const SessionConfig& config) 
     options.SetIntraOpNumThreads(config.intra_threads);
     options.SetInterOpNumThreads(config.inter_threads);
     options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    options.AddConfigEntry("session.intra_op.allow_spinning", config.spin ? "1" : "0");
+    options.AddConfigEntry("session.inter_op.allow_spinning", config.spin ? "1" : "0");
     for (const std::string& provider : config.providers) {
         if (provider == "cpu") continue;
         try {
@@ -71,6 +76,19 @@ Ort::Session load_session(const std::string& path, const SessionConfig& config) 
     }
     const std::filesystem::path model(path);
     return Ort::Session(env(), model.c_str(), options);
+}
+
+std::shared_ptr<Ort::Session> shared_session(const std::string& path, const SessionConfig& config) {
+    static std::mutex mutex;
+    static std::map<std::string, std::weak_ptr<Ort::Session>> sessions;
+    std::string key = std::filesystem::weakly_canonical(path).string() + '|' + std::to_string(config.intra_threads) +
+                      '|' + std::to_string(config.inter_threads) + '|' + (config.spin ? "spin" : "idle");
+    for (const std::string& provider : config.providers) key += '|' + provider;
+    std::lock_guard lock(mutex);
+    if (auto existing = sessions[key].lock()) return existing;
+    auto session = std::make_shared<Ort::Session>(load_session(path, config));
+    sessions[key] = session;
+    return session;
 }
 
 }  // namespace ee::onnx

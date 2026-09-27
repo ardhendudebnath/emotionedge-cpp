@@ -42,6 +42,19 @@
       "source": "convert:ml/export/convert_nllb_ct2.sh"
     },
     {
+      "id": "mt.nllb200.distilled600m.emo.int8",
+      "task": "mt",
+      "format": "ct2",
+      "path": "mt/nllb-200-distilled-600M-emo-int8",
+      "check_file": "model.bin",
+      "sha256": "",
+      "languages": ["en", "hi"],
+      "devices": ["cpu", "cuda"],
+      "precision": "int8",
+      "license": "CC-BY-NC-4.0 (non-commercial)",
+      "source": "convert:ml/train/finetune_nllb_lora.py + ml/export/convert_nllb_ct2.sh"
+    },
+    {
       "id": "tts.piper.hi_IN.pratham.medium",
       "task": "tts",
       "format": "piper",
@@ -68,6 +81,32 @@
       "license": "see MODEL_CARD in rhasspy/piper-voices",
       "source": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
       "sidecars": ["https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"]
+    },
+    {
+      "id": "emotion.acoustic.emotion2vec_plus_base",
+      "task": "emotion.acoustic",
+      "format": "onnx",
+      "path": "emotion/emotion2vec-plus-base",
+      "check_file": "model.onnx",
+      "sha256": "",
+      "languages": ["*"],
+      "devices": ["cpu", "cuda"],
+      "precision": "fp32",
+      "license": "FunASR model license (emotion2vec/emotion2vec_plus_base): attribution required",
+      "source": "convert:ml/export/export_emotion2vec_onnx.py"
+    },
+    {
+      "id": "emotion.lexical.distilroberta_en",
+      "task": "emotion.lexical",
+      "format": "onnx",
+      "path": "emotion/distilroberta-emotion-en",
+      "check_file": "model.onnx",
+      "sha256": "",
+      "languages": ["en"],
+      "devices": ["cpu"],
+      "precision": "int8",
+      "license": "none stated (j-hartmann/emotion-english-distilroberta-base): clear before shipping",
+      "source": "convert:ml/export/export_lexical_onnx.py --int8"
     }
   ],
   "device_profiles": {
@@ -82,14 +121,17 @@
     "en-hi": {
       "vad": "vad.silero.v6",
       "asr": "asr.whisper.base.q5_1",
-      "mt": "mt.nllb200.distilled600m.int8",
-      "tts": "tts.piper.hi_IN.pratham.medium"
+      "mt": "mt.nllb200.distilled600m.emo.int8",
+      "tts": "tts.piper.hi_IN.pratham.medium",
+      "emotion.acoustic": "emotion.acoustic.emotion2vec_plus_base",
+      "emotion.lexical": "emotion.lexical.distilroberta_en"
     },
     "hi-en": {
       "vad": "vad.silero.v6",
       "asr": "asr.whisper.base.q5_1",
       "mt": "mt.nllb200.distilled600m.int8",
-      "tts": "tts.piper.en_US.lessac.medium"
+      "tts": "tts.piper.en_US.lessac.medium",
+      "emotion.acoustic": "emotion.acoustic.emotion2vec_plus_base"
     }
   }
 }

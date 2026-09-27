@@ -1,6 +1,7 @@
 // emotionedge: command-line front end for the EmotionEdge pipeline.
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <filesystem>
@@ -16,7 +17,14 @@
 #include <windows.h>
 #endif
 
+#include <nlohmann/json.hpp>
+
+#include "core/audio/resampler.hpp"
 #include "core/audio/wav.hpp"
+#include "core/emotion/acoustic.hpp"
+#include "core/emotion/fusion.hpp"
+#include "core/emotion/lexical.hpp"
+#include "core/emotion/prosody_features.hpp"
 #include "core/pipeline/builtin_stages.hpp"
 #include "core/pipeline/demo.hpp"
 #include "core/pipeline/session.hpp"
@@ -47,6 +55,8 @@ commands:
   models     List or verify model files:  models [list|verify] [--manifest FILE]
   say        Speak text with a TTS engine into a WAV (test input for real ASR):
              say --text "One. | Two." [--engine piper --model-id ID --manifest FILE] [--out F]
+  emotion    Run only the emotion models (the config's `emotion` stage) on audio and/or text:
+             emotion --input a.wav [--text "..."]  |  emotion --manifest items.jsonl --out p.jsonl
   stages     List the registered stage types
   version    Print the version
 
@@ -378,6 +388,91 @@ int cmd_say(const Args& args) {
     return 0;
 }
 
+/// Runs only the emotion models of the pipeline's `emotion` stage (same params, models and fusion
+/// as a full run) on WAV files and/or text, e.g. to evaluate them on a labelled set:
+///   emotion --input a.wav [--text "..."]           one item, printed as JSON
+///   emotion --manifest items.jsonl --out p.jsonl   {"id", "audio", "text"} per line -> predictions
+int cmd_emotion(const Args& args) {
+    PipelineSpec spec = load_pipeline(resolve_config(args));
+    for (const auto& [key, value] : args.sets) apply_override(spec, key, value);
+    const StageSpec* stage = spec.find_stage("emotion");
+    if (stage == nullptr) throw std::runtime_error("the pipeline has no 'emotion' stage");
+    const Params& params = stage->params;
+    std::unique_ptr<ModelRegistry> registry;
+    if (!spec.models_manifest.empty() && fs::exists(spec.models_manifest)) {
+        registry = std::make_unique<ModelRegistry>(ModelRegistry::load(spec.models_manifest));
+    }
+    const auto acoustic = make_acoustic_model(params, registry.get());
+    const auto lexical = make_lexical_model(params, registry.get());
+    const FusionConfig fusion = FusionConfig::from(params);
+    const std::string language = args.get("language", spec.source_language);
+
+    std::vector<nlohmann::json> items;
+    if (args.has("manifest")) {
+        std::ifstream in(args.get("manifest"));
+        if (!in) throw std::runtime_error("cannot open " + args.get("manifest"));
+        for (std::string line; std::getline(in, line);) {
+            if (line.find_first_not_of(" \t\r") != std::string::npos) items.push_back(nlohmann::json::parse(line));
+        }
+    } else if (args.has("input") || args.has("text")) {
+        items.push_back({{"id", args.get("input", "text")}, {"audio", args.get("input")}, {"text", args.get("text")}});
+    } else {
+        throw std::runtime_error("emotion needs --input FILE.wav and/or --text \"...\", or --manifest FILE.jsonl");
+    }
+
+    const auto modality = [](const ModalityEstimate& e, double ms) {
+        return nlohmann::json{{"valid", e.valid},
+                              {"vad", {e.vad.v, e.vad.a, e.vad.d}},
+                              {"confidence", {e.confidence.v, e.confidence.a, e.confidence.d}},
+                              {"ms", ms}};
+    };
+    const auto elapsed_ms = [](std::chrono::steady_clock::time_point start) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    };
+    std::ofstream out_file;
+    if (args.has("out")) {
+        const fs::path out = args.get("out");
+        if (out.has_parent_path()) fs::create_directories(out.parent_path());
+        out_file.open(out);
+    }
+    for (const nlohmann::json& item : items) {
+        ModalityEstimate a;
+        ModalityEstimate l;
+        double a_ms = 0.0;
+        double l_ms = 0.0;
+        if (const std::string audio = item.value("audio", std::string()); !audio.empty()) {
+            const WavData wav = read_wav(audio);
+            const std::vector<float> samples = Resampler::convert(wav.samples, wav.sample_rate, 16000);
+            ProsodyTracker tracker(16000);
+            tracker.push(samples);
+            tracker.flush();
+            const auto start = std::chrono::steady_clock::now();
+            a = acoustic->estimate(samples, tracker.frames(), tracker.hop_seconds());
+            a_ms = elapsed_ms(start);
+        }
+        if (const std::string text = item.value("text", std::string()); !text.empty() && lexical != nullptr) {
+            const auto start = std::chrono::steady_clock::now();
+            l = lexical->estimate(text, language);
+            l_ms = elapsed_ms(start);
+        }
+        const EmotionState fused = fuse(a, l, fusion);
+        nlohmann::json row{{"id", item.value("id", std::string())},
+                           {"acoustic", modality(a, a_ms)},
+                           {"lexical", modality(l, l_ms)},
+                           {"fused",
+                            {{"vad", {fused.vad.v, fused.vad.a, fused.vad.d}},
+                             {"label", std::string(to_string(fused.label))},
+                             {"confidence", fused.confidence}}}};
+        if (out_file.is_open()) {
+            out_file << row.dump() << '\n';
+        } else {
+            std::printf("%s\n", row.dump(2).c_str());
+        }
+    }
+    if (out_file.is_open()) std::printf("wrote %zu predictions to %s\n", items.size(), abs_path(args.get("out")).c_str());
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -402,6 +497,7 @@ int main(int argc, char** argv) {
         if (args.command == "models") return cmd_models(args);
         if (args.command == "stages") return cmd_stages();
         if (args.command == "say") return cmd_say(args);
+        if (args.command == "emotion") return cmd_emotion(args);
         if (args.command == "version") {
             std::printf("emotionedge %s\n", EE_VERSION);
             return 0;

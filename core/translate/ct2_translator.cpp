@@ -56,14 +56,20 @@ public:
             throw std::runtime_error("no NLLB code for " + std::string(r.source_language) + "->" +
                                      std::string(r.target_language));
         }
-        // Vanilla NLLB would translate the control tokens and tags literally: strip them unless
-        // this is the P2 fine-tune that was trained on them.
-        std::string_view body = control_tokens_ ? r.source : strip_control_prefix(r.source);
+        // Vanilla NLLB would translate the control tokens literally: they reach the model only
+        // when it is the P3 fine-tune trained on them. The prefix is encoded on its own, so the
+        // body's word indices (emphasis) do not count the prefix's words.
+        const std::string_view body = strip_control_prefix(r.source);
+        std::string_view control = control_tokens_ ? r.source.substr(0, r.source.size() - body.size()) : "";
+        while (!control.empty() && control.back() == ' ') control.remove_suffix(1);
         const Markup source = parse_markup(body, r.source_language);
 
+        std::vector<std::string> control_pieces;
+        if (!control.empty()) sp_.Encode(std::string(control), &control_pieces);
         std::vector<std::string> pieces;
         sp_.Encode(source.plain, &pieces);
         std::vector<std::string> tokens{std::string(*src_code)};
+        tokens.insert(tokens.end(), control_pieces.begin(), control_pieces.end());
         tokens.insert(tokens.end(), pieces.begin(), pieces.end());
         tokens.push_back("</s>");
 
@@ -89,7 +95,7 @@ public:
         if (options.return_attention && !results[0].attention.empty()) {
             // attention[t][s]: weight of source token s for hypothesis token t (row 0 = language token).
             const auto& attention = results[0].attention[0];
-            const std::vector<int> src_word = piece_words(tokens, 1);
+            const std::vector<int> src_word = piece_words(tokens, 1 + control_pieces.size());  // skip lang + prefix
             const std::vector<int> tgt_word = piece_words(hyp, 1);
             for (std::uint16_t s : source.emphasis) {
                 int best_word = -1;

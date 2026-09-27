@@ -111,6 +111,20 @@ Peak RAM is 1.2 GB. The remaining gap is NLLB-600M: a CPU decodes it at 160–31
 sentence, even with MKL. Faster final passes need a GPU/NPU, a smaller or distilled MT model, or
 shorter segments.
 
+Phase 2 adds emotion2vec+ (voice) and DistilRoBERTa (words) to the emotion engine. With them,
+"I'm so sorry, I didn't mean to hurt you." reads as sadness (V −0.51, A −0.33, D −0.25).
+The prosody rules had called it anger.
+- The endpoint emotion estimate takes ~140 ms, in parallel with the ASR final decode, so it
+  adds nothing to end-to-end latency.
+- Peak RAM is 1.7 GB: one emotion2vec+ session is shared by the emotion engine and the
+  consistency check.
+
+Phase 2 also adds an emotion-token LoRA for NLLB, which translates `<emo=… a=… reg=…> text`.
+- It scores FLORES chrF 56.7 against 55.8 for plain NLLB-600M, and uses the casual Hindi
+  register the expressivity profile asks for.
+- Its final pass is faster: 207–252 ms p50.
+- End to end, offline p95 is 762–827 ms and real-time p50 is 696–860 ms.
+
 | CMake option | Adds | Needs |
 |---|---|---|
 | `EE_WITH_WHISPER` | whisper.cpp streaming ASR | fetched automatically |
@@ -160,10 +174,11 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
 
 ## Roadmap
 
-1. **Baseline pipe** (in progress). Capture → VAD → whisper.cpp → NLLB → Piper, with
-   telemetry from day one.
-2. **Emotion in.** The emotion2vec head and DistilRoBERTa lexical model replace the stand-ins,
-   plus the NLLB LoRA with emotion tokens.
+1. **Baseline pipe** (done). Capture → VAD → whisper.cpp → NLLB → Piper, with telemetry from
+   day one.
+2. **Emotion in** (done). emotion2vec+ and the DistilRoBERTa lexical model replace the stand-ins,
+   plus an NLLB-600M LoRA that reads the emotion control prefix. All are the defaults in
+   `config/pipeline.engines.yaml`; `ml/README.md` has their scores.
 3. **Emotion out.** StyleTTS2 with style vectors and the ECAPA-TDNN voice print.
 4. **Closed loop & speed.** ECS-trained controller, wait-k streaming MT, INT8 everywhere, GPU
    execution providers.
