@@ -22,6 +22,7 @@ struct SynthesisRequest {
     std::vector<std::uint16_t> emphasis;       ///< clause-local word indices
     const StyleVector* style = nullptr;        ///< StyleTTS2 conditioning (4.1)
     const SpeakerEmbedding* voice = nullptr;   ///< speaker voice print (1.4)
+    float voice_f0 = 0.0f;                     ///< speaker's median F0 in Hz (0 = unknown)
     /// The emotion to render: the controller's target (source + closed-loop correction), for
     /// engines that steer style directly (Kokoro's learned per-emotion style offsets).
     const EmotionState* emotion = nullptr;

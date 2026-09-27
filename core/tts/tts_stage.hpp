@@ -31,6 +31,10 @@ private:
         std::uint32_t index = 0;
         bool last = false;
     };
+    struct SpeakerVoice {
+        SpeakerEmbedding print{};
+        float f0 = 0.0f;  ///< median F0 in Hz, 0 if unknown
+    };
     void synthesize(const Job& job);
     void emit_audio(const Job& job, std::uint32_t extra_flags);
 
@@ -39,8 +43,8 @@ private:
     ChunkerConfig chunker_;
     std::size_t chunk_samples_ = 2400;
     std::deque<Job> pending_;
-    std::map<std::uint64_t, SpeakerEmbedding> voices_;
-    SpeakerEmbedding latest_voice_{};
+    std::map<std::uint64_t, SpeakerVoice> voices_;
+    SpeakerVoice latest_voice_{};
     bool have_voice_ = false;
     bool use_voice_print_ = true;
     SynthesisResult result_;

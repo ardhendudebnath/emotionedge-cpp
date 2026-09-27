@@ -139,5 +139,22 @@ TEST(Segmenter, FlagsBargeInWhilePlaybackIsActive) {
     EXPECT_EQ(controls[0].utterance, 1u);
 }
 
+// One speaker who keeps talking: with barge_in off, the playing translation is not cancelled.
+TEST(Segmenter, BargeInCanBeTurnedOffForMonologues) {
+    test::RecordingContext ctx;
+    ctx.mutable_pipeline().sample_rate = 16000;
+    ctx.mutable_params().set("barge_in", "false");
+    AudioIo io;
+    io.playback_active = true;
+    ctx.services().audio = &io;
+    SegmenterStage stage;
+    stage.open(ctx);
+    std::vector<float> audio = test::silence(0.3, 16000);
+    test::append(audio, test::buzz(150.0, 0.4, 16000, 0.2f));
+    feed(stage, audio);
+    EXPECT_TRUE(ctx.of(FrameKind::Control).empty());
+    EXPECT_FALSE(ctx.of(FrameKind::Audio).empty());  // the speech itself still flows
+}
+
 }  // namespace
 }  // namespace ee

@@ -5,6 +5,7 @@
 #include "core/audio/dsp.hpp"
 #include "core/audio/pitch.hpp"
 #include "core/audio/resampler.hpp"
+#include "core/audio/speaker.hpp"
 #include "core/tts/clause_chunker.hpp"
 #include "core/tts/formant_synth.hpp"
 #include "core/tts/tts_stage.hpp"
@@ -126,10 +127,11 @@ TEST(FormantSynth, EmphasisAddsAPrePauseAndLoudness) {
 TEST(FormantSynth, KeepsTheSpeakersPitchFromTheVoicePrint) {
     FormantSynth synth;
     SpeakerEmbedding print{};
-    print[0] = 0.120f;  // 120 Hz speaker
+    print[0] = 0.120f;  // 120 Hz speaker (pitch-encoder layout)
     SynthesisRequest req;
     req.text = "hello there my friend";
     req.voice = &print;
+    req.voice_f0 = voice_print_f0(print);  // what the speaker stage sends with every print
     SynthesisResult out;
     synth.synthesize(req, out);
     const auto at16k = Resampler::convert(out.audio, out.sample_rate, 16000);

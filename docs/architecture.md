@@ -28,7 +28,7 @@ for the real engines.
 | 1.1 Audio capture: miniaudio, 16 kHz mono f32, 20 ms frames, zero-alloc callback, SPSC ring | `audio/device.cpp`, `audio/ring_buffer.hpp`, `audio/frontend.cpp` | done; miniaudio **adapter** (`EE_WITH_MINIAUDIO`) |
 | 1.2 Front-end DSP: echo cancel (reference = our TTS), neural noise suppression, AGC + loudness | `audio/dsp.cpp`, `audio/frontend.cpp` | AGC + limiter **done**; the playback → AEC reference path is **done**; RNNoise / WebRTC AEC3 plug into `INoiseSuppressor` / `IEchoCanceller` (**planned**) |
 | 1.3 VAD & segmenter: speech/silence every ~30 ms, 160 ms hangover, partial chunks, barge-in | `audio/speech_detector.cpp`, `audio/silero_detector.cpp`, `audio/segmenter.cpp` | **done** (energy detector **stand-in**; Silero v5/v6 **adapter**, `EE_WITH_ONNXRUNTIME`) |
-| 1.4 Speaker encoder: ECAPA-TDNN, 192-d voice print for the TTS | `audio/speaker.cpp` | pitch voice print **stand-in**; ECAPA **planned** (phase 3) |
+| 1.4 Speaker encoder: ECAPA-TDNN, 192-d voice print for the TTS | `audio/speaker.cpp`, `audio/ecapa_encoder.cpp` | ECAPA-TDNN (SpeechBrain, exact ONNX export) **done**; pitch voice print **stand-in**. Every print also carries the speaker's median F0, which picks the TTS voice. ECAPA cosine against synthetic voices gets the gender right for only 11/24 RAVDESS actors; F0 gets 23/24 |
 
 ### 02 · Perceive
 
@@ -49,8 +49,8 @@ for the real engines.
 
 | Box | Code | Status |
 |---|---|---|
-| 4.1 Emotion controller: V·A·D → pitch, range, rate, energy, pauses, voice quality; relative to the target baseline; emphasis boosts; closed-loop correction; 128-d style vector | `prosody/controller.cpp`, `prosody/controller_stage.cpp`, `prosody/style.cpp` | rules v1 + closed loop **done**; style anchors are **placeholders** until the StyleTTS2 style encoder (phase 3) |
-| 4.2 Expressive TTS: StyleTTS2 on style vector + voice print, clause chunker, HiFi-GAN 24 kHz, Piper/VITS fallback | `tts/clause_chunker.cpp`, `tts/formant_synth.cpp`, `tts/piper_engine.cpp`, `tts/tts_stage.cpp` | chunker **done**; formant **stand-in**; Piper **adapter** (`EE_WITH_PIPER`); StyleTTS2 **planned** (phase 3) |
+| 4.1 Emotion controller: V·A·D → pitch, range, rate, energy, pauses, voice quality; relative to the target baseline; emphasis boosts; closed-loop correction; 128-d style vector | `prosody/controller.cpp`, `prosody/controller_stage.cpp`, `prosody/style.cpp` | rules v1 + closed loop **done**. For Kokoro, per-emotion offsets in its 256-d style space are learned against an emotion classifier (`ml/train/learn_style_offsets.py`) and applied by V·A·D strength and confidence. The 128-d placeholder anchors remain for other engines |
+| 4.2 Expressive TTS: StyleTTS2 on style vector + voice print, clause chunker, HiFi-GAN 24 kHz, Piper/VITS fallback | `tts/clause_chunker.cpp`, `tts/formant_synth.cpp`, `tts/piper_engine.cpp`, `tts/tts_stage.cpp` | chunker **done** (first clause cappable for slow vocoders). Kokoro-82M (StyleTTS2 family, 24 kHz) **done** (`tts/kokoro_engine.cpp`, `tts/kokoro_g2p.cpp` = misaki's G2P ported to C++): the controller drives its durations, F0 shift, range, accents and final contour. Piper **fallback**; formant **stand-in** |
 
 ### 05 · Deliver
 

@@ -71,8 +71,8 @@ void TtsStage::open(StageContext& ctx) {
 void TtsStage::process(Frame& f) {
     switch (f.kind) {
     case FrameKind::VoicePrint:
-        voices_[f.utterance] = f.voice;
-        latest_voice_ = f.voice;
+        voices_[f.utterance] = {f.voice, f.voice_f0};
+        latest_voice_ = {f.voice, f.voice_f0};
         have_voice_ = true;
         while (voices_.size() > 8) voices_.erase(voices_.begin());
         return;
@@ -128,10 +128,15 @@ void TtsStage::synthesize(const Job& job) {
     target.label = nearest_label(target.vad);
     req.emotion = &target;
     if (use_voice_print_) {
+        const SpeakerVoice* voice = nullptr;
         if (const auto it = voices_.find(job.speech.utterance); it != voices_.end()) {
-            req.voice = &it->second;
+            voice = &it->second;
         } else if (have_voice_) {
-            req.voice = &latest_voice_;
+            voice = &latest_voice_;
+        }
+        if (voice != nullptr) {
+            req.voice = &voice->print;
+            req.voice_f0 = voice->f0;
         }
     }
     engine->synthesize(req, result_);

@@ -81,7 +81,8 @@ public:
           session_(onnx::shared_session((dir_ / "model.onnx").string(), onnx::session_config(params, registry))),
           espeak_voice_(params.str("espeak_voice", "hi")),
           match_(params.str("voice_match", "pitch")),
-          controls_(params.flag("prosody_controls", true)) {
+          controls_(params.flag("prosody_controls", true)),
+          trim_(params.flag("trim_silence", true)) {
         // Keep the documents alive for the loops: items() refers into them.
         const nlohmann::json config = read_json(dir_ / "config.json");
         for (const auto& [symbol, id] : config.at("vocab").items()) {
@@ -94,13 +95,18 @@ public:
         }
         if (voices_.empty()) throw ConfigError("Kokoro voice pack '" + dir + "' lists no voices");
         // Learned per-emotion style offsets (ml/train/learn_style_offsets.py), if present.
+        // style_emotions limits which offsets apply: an offset that only fools the training
+        // judge (ml/eval/eval_style_offsets.py) should stay off.
         style_strength_ = params.real("style_strength", 1.0f);
-        if (const fs::path path = dir_ / "style_offsets.json"; style_strength_ > 0.0f && fs::exists(path)) {
+        const std::vector<std::string> allowed = params.list("style_emotions");
+        const fs::path path = dir_ / params.str("style_offsets", "style_offsets.json");
+        if (style_strength_ > 0.0f && fs::exists(path)) {
             const nlohmann::json offsets = read_json(path);
             for (const auto& [label, values] : offsets.at("offsets").items()) {
                 const auto parsed = parse_emotion_label(label);
                 auto vec = values.get<std::vector<float>>();
                 if (!parsed || vec.size() != kStyleDim) throw ConfigError("bad style offset '" + label + "' in " + path.string());
+                if (!allowed.empty() && std::find(allowed.begin(), allowed.end(), label) == allowed.end()) continue;
                 offsets_[*parsed] = std::move(vec);
             }
         }
@@ -119,7 +125,7 @@ public:
         out.sample_rate = kSampleRate;
         out.audio.clear();
         out.words.clear();
-        if (!fixed_ && !matched_ && match_ != "off" && req.voice != nullptr) match_voice(*req.voice);
+        if (!fixed_ && !matched_ && match_ != "off" && req.voice != nullptr) match_voice(*req.voice, req.voice_f0);
 
         const std::string ps = kokoro::misaki_g2p(
             req.text, [this](const std::string& chunk) { return espeak::text_to_phonemes(chunk, espeak_voice_, true); });
@@ -207,8 +213,30 @@ public:
         const float* audio = result[0].GetTensorData<float>();
         const std::size_t samples = result[0].GetTensorTypeAndShapeInfo().GetElementCount();
         const float gain = db_to_gain(p.energy_db);
-        out.audio.resize(samples);
-        for (std::size_t i = 0; i < samples; ++i) out.audio[i] = std::clamp(audio[i] * gain, -1.0f, 1.0f);
+        // Kokoro renders ~0.4-0.5 s of near-silence around every clause. Shortening its boundary
+        // tokens instead costs intelligibility (Whisper CER 0.19 -> 0.31), so the audio is trimmed:
+        // the first chunk then carries speech, and split clauses do not drift apart.
+        std::size_t keep_begin = 0;
+        std::size_t keep_end = samples;
+        if (trim_) {
+            float peak = 0.0f;
+            for (std::size_t i = 0; i < samples; ++i) peak = std::max(peak, std::abs(audio[i]));
+            const float threshold = std::max(peak * 0.01f, 1e-4f);  // -40 dB of the clause peak
+            std::size_t first = 0;
+            while (first < samples && std::abs(audio[first]) < threshold) ++first;
+            std::size_t last = samples;
+            while (last > first && std::abs(audio[last - 1]) < threshold) --last;
+            const std::size_t lead = kSampleRate * 20 / 1000;
+            const std::size_t tail = kSampleRate * (req.utterance_final ? 120 : 60) / 1000;
+            keep_begin = first > lead ? first - lead : 0;
+            keep_end = std::min(samples, last + tail);
+            if (keep_end <= keep_begin) keep_begin = keep_end = 0;
+        }
+        out.audio.resize(keep_end - keep_begin);
+        for (std::size_t i = keep_begin; i < keep_end; ++i) {
+            out.audio[i - keep_begin] = std::clamp(audio[i] * gain, -1.0f, 1.0f);
+        }
+        const double trimmed_s = static_cast<double>(keep_begin) / kSampleRate;
 
         // Word timings from the frames per token, when the phoneme words match the text words.
         const std::int64_t* frames = result[1].GetTensorData<std::int64_t>();
@@ -230,8 +258,8 @@ public:
                 now = end;
             }
             for (std::size_t w = 0; w < words.size(); ++w) {
-                out.words.push_back({words[w], static_cast<float>(std::max(0.0, spans[w].first)),
-                                     static_cast<float>(std::max(0.0, spans[w].second)), 1.0f});
+                out.words.push_back({words[w], static_cast<float>(std::max(0.0, spans[w].first - trimmed_s)),
+                                     static_cast<float>(std::max(0.0, spans[w].second - trimmed_s)), 1.0f});
             }
         }
     }
@@ -261,8 +289,10 @@ private:
     }
 
     // Picks the pack voice closest to the speaker, once: switching voices mid-conversation
-    // would sound like a different person.
-    void match_voice(const SpeakerEmbedding& print) {
+    // would sound like a different person. `pitch` (default) compares median F0 and gets the
+    // gender right for 23/24 RAVDESS actors. `ecapa` compares voice prints by cosine, which only
+    // works within a domain: against Kokoro's synthetic Hindi voices it gets 11/24.
+    void match_voice(const SpeakerEmbedding& print, float speaker_f0) {
         std::size_t best = current_;
         if (match_ == "ecapa") {
             double best_score = -2.0;
@@ -281,8 +311,8 @@ private:
                 }
             }
         } else {
-            const float f0 = voice_print_f0(print);
-            if (f0 <= 0.0f) return;  // no pitch in this print; try again with the next one
+            const float f0 = speaker_f0;
+            if (f0 <= 0.0f) return;  // no pitch measured yet; try again with the next print
             float best_gap = std::numeric_limits<float>::max();
             for (std::size_t i = 0; i < voices_.size(); ++i) {
                 const float gap = std::abs(std::log2(std::max(1.0f, voices_[i].median_f0) / f0));
@@ -315,6 +345,7 @@ private:
     std::string espeak_voice_;
     std::string match_;
     bool controls_ = true;
+    bool trim_ = true;
     float style_strength_ = 1.0f;
     std::map<EmotionLabel, std::vector<float>> offsets_;
     std::vector<float> style_;

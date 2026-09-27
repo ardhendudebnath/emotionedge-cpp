@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from emotionedge_ml import emotion_space as es  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "train"))
-from learn_style_offsets import REPO, TARGETS, VOICES  # noqa: E402
+from learn_style_offsets import EMOJI, REPO, TARGETS, VOICES  # noqa: E402
 
 DIMENSIONAL = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
 
@@ -55,6 +55,7 @@ def main() -> int:
     parser.add_argument("--espeak-lib", type=Path)
     parser.add_argument("--sentences", type=int, default=12)
     parser.add_argument("--strength", type=float, default=1.0, help="scale on the offsets")
+    parser.add_argument("--offsets", default="style_offsets.json", help="file in --voice-dir")
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -72,10 +73,10 @@ def main() -> int:
     rows = [json.loads(line) for line in args.corpus.read_text(encoding="utf-8").splitlines() if line.strip()]
     texts = sorted({r["tgt"] for r in rows if r.get("tgt") and 6 <= len(r["tgt"].split()) <= 16})
     random.Random(5).shuffle(texts)
-    held = [(t, g2p(t)[0]) for t in texts[400:400 + args.sentences * 3]]
+    held = [(t, g2p(t)[0]) for t in texts[400:400 + args.sentences * 3] if not EMOJI.search(t)]
     held = [(t, p) for t, p in held if 20 <= len(p) <= 200][:args.sentences]
 
-    offsets = json.loads((args.voice_dir / "style_offsets.json").read_text(encoding="utf-8"))["offsets"]
+    offsets = json.loads((args.voice_dir / args.offsets).read_text(encoding="utf-8"))["offsets"]
     from huggingface_hub import hf_hub_download  # type: ignore
     from kokoro import KModel  # type: ignore
 

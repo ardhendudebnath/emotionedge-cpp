@@ -7,7 +7,7 @@ device (blueprint: "Python exists only in the offline factory").
 |---|---|---|
 | P1 Data | IEMOCAP, MSP-Podcast, CREMA-D, ESD; augment noise/RIR/speed | `data/prepare_manifest.py` |
 | P2 Train & fine-tune | emotion2vec head → V·A·D; NLLB LoRA + emotion tokens | `train/train_vad_head.py`, `train/finetune_nllb_lora.py` |
-| P3 Compress | distillation, INT8 PTQ/QAT, pruning, ONNX simplify | `distill/quantize_onnx.py` |
+| P3 Compress | distillation, INT8 PTQ/QAT, pruning, ONNX simplify | `distill/quantize_onnx.py`; INT8 kept only where it does not change decisions (see the exports) |
 | P4 Export | torch.onnx / Optimum, CT2 converter, GGML quantize, sign + write manifest | `export/*`: `export_emotion2vec_onnx.py`, `export_lexical_onnx.py`, `export_acoustic_onnx.py`, … |
 | P5 Evaluate | WER · COMET · BLEU · emotion F1 · CCC · ECS · latency | `emotionedge_ml/metrics.py`, `eval/eval_emotion.py`, `eval/quality_gate.py` |
 
@@ -107,6 +107,41 @@ What the numbers show:
   noise. The teacher never saw the emotion, so the tokens can carry little signal yet.
 - **What would carry it:** emotionally faithful references, from human or LLM rewrites per
   emotion, as a phase-4 dataset.
+
+## Emotion out: Kokoro style offsets (P2/P3)
+
+Kokoro-82M reads everything in a neutral style. emotion2vec+ heard Piper, plain Kokoro and
+controller-driven Kokoro alike as "neutral" on every RAVDESS clause. Extreme prosody moves
+arousal (happy/surprised) but not anger or sadness. `train/learn_style_offsets.py` learns one
+offset per emotion in Kokoro's 256-d style space:
+- **Objective:** gradient ascent on emotion2vec+ through the differentiable TTS, on the GPU.
+- **Radius:** Δ stays within the spread of the voices' own style vectors.
+- **Intelligibility term:** Whisper-small's loss on the Hindi text, above the neutral render's.
+
+`eval/eval_style_offsets.py` then judges held-out sentences with models that played no part in
+training: audeering's dimensional model for V·A·D, and Whisper-small for CER (neutral renders:
+0.48).
+
+| offset | independent V·A·D shift | direction vs prototype | Whisper CER | shipped |
+|---|---|---|---|---|
+| anger | A +0.11, D +0.08 | ✅ | 0.30 | yes |
+| joy | A +0.12, D +0.06 | ✅ | 0.31 | yes |
+| sadness | A −0.25, D −0.20 | ✅ (valence ~0) | 0.51 | yes |
+| fear | V +0.10, D −0.16 | ❌ fools the training judge only | 6.17 | no |
+| surprise | A +0.09 | ✅ | 1.79 (hallucinations) | no |
+
+Without the intelligibility term, CER rose to 0.59–0.87 and fear reached P = 1.00 with the
+training judge. That is an adversarial solution. Valence barely moves for any offset
+(|ΔV| ≤ 0.05): the offsets carry arousal and dominance.
+
+End to end on RAVDESS (`eval/eval_ecs.py`, judged by emotion2vec+ in the consistency stage):
+- **Piper and plain Kokoro:** 0–4% of clauses heard as non-neutral; arousal CCC in→out ≈ 0.01–0.03.
+- **Kokoro with controls and offsets:** 21–31% non-neutral; arousal CCC 0.10–0.35.
+- **Why a range:** the metric moves with benign changes. Trimming Kokoro's clause-edge silence
+  alone moved it from 0.35 to 0.13, because the judge pools over silence. With ~50 utterances and
+  one judge, it is noisy.
+- **Why ECS alone misleads:** ECS stays ≈0.82 throughout, since a neutral output still scores
+  1 − ‖src‖/2√3.
 
 ## Setup
 

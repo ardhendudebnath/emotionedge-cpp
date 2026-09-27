@@ -27,10 +27,13 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import time
 from pathlib import Path
 
 REPO = "hexgrad/Kokoro-82M"
+# The ranges core/tts/text_filter.cpp removes before espeak-ng.
+EMOJI = re.compile("[☀-➿⬀-⯿︀-️\U0001F000-\U0001FAFF\U000E0000-\U000E007F]")
 VOICES = ["hf_alpha", "hf_beta", "hm_omega", "hm_psi"]
 # Blueprint label -> the judge's (emotion2vec+) class.
 TARGETS = {"anger": "angry", "joy": "happy", "sadness": "sad", "fear": "fearful", "surprise": "surprised"}
@@ -51,6 +54,10 @@ def main() -> int:
     parser.add_argument("--train", type=int, default=64)
     parser.add_argument("--val", type=int, default=16)
     parser.add_argument("--seed", type=int, default=5)
+    parser.add_argument("--asr-weight", type=float, default=1.0,
+                        help="weight of the intelligibility term (Whisper-small loss on the text, above neutral); "
+                             "0 lets Δ trade intelligibility for the judge's approval")
+    parser.add_argument("--out-name", default="style_offsets.json")
     args = parser.parse_args()
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -67,7 +74,11 @@ def main() -> int:
     rows = [json.loads(line) for line in args.corpus.read_text(encoding="utf-8").splitlines() if line.strip()]
     texts = sorted({r["tgt"] for r in rows if r.get("tgt") and 6 <= len(r["tgt"].split()) <= 16})
     random.shuffle(texts)
-    phonemes = [p for p in (g2p(t)[0] for t in texts[:(args.train + args.val) * 2]) if 20 <= len(p) <= 200]
+    # Emoji are skipped: espeak-ng 1.51 overflows a buffer on some ("❤️").
+    pairs = [(t, g2p(t)[0]) for t in texts[:(args.train + args.val) * 2] if not EMOJI.search(t)]
+    pairs = [(t, p) for t, p in pairs if 20 <= len(p) <= 200]
+    text_of = dict((p, t) for t, p in pairs)
+    phonemes = [p for _, p in pairs]
     train_ps, val_ps = phonemes[:args.train], phonemes[args.train:args.train + args.val]
     print(f"{len(train_ps)} training / {len(val_ps)} held-out sentences")
 
@@ -119,6 +130,45 @@ def main() -> int:
         feats = judge.forward(source=x, padding_mask=None, mask=False, features_only=True, remove_extra_tokens=True)["x"]
         return judge.proj(feats.mean(1)).squeeze(0)
 
+    # Intelligibility: Whisper-small's teacher-forced loss on the sentence's own Hindi text. Only
+    # a rise above the neutral render counts, so emotion cannot be bought by garbling speech.
+    asr_loss = None
+    if args.asr_weight > 0:
+        from transformers import WhisperForConditionalGeneration, WhisperProcessor  # type: ignore
+
+        wproc = WhisperProcessor.from_pretrained("openai/whisper-small")
+        wproc.tokenizer.set_prefix_tokens(language="hindi", task="transcribe")
+        whisper = WhisperForConditionalGeneration.from_pretrained("openai/whisper-small").to(dev).eval()
+        for p in whisper.parameters():
+            p.requires_grad_(False)
+        mel_filters = torch.tensor(wproc.feature_extractor.mel_filters, dtype=torch.float32, device=dev)  # [201, 80]
+        hann = torch.hann_window(400, device=dev)
+        start_id = whisper.config.decoder_start_token_id
+
+        def whisper_features(audio24):  # WhisperFeatureExtractor, differentiable, padded to 30 s
+            x = torchaudio.functional.resample(audio24, 24000, 16000)
+            x = torch.nn.functional.pad(x, (0, max(0, 480000 - x.shape[-1])))[:480000]
+            power = torch.stft(x, 400, 160, window=hann, return_complex=True)[..., :-1].abs() ** 2
+            logmel = torch.clamp(mel_filters.T @ power, min=1e-10).log10()
+            logmel = torch.maximum(logmel, logmel.max() - 8.0)
+            return ((logmel + 4.0) / 4.0).unsqueeze(0)
+
+        label_cache = {}
+
+        def asr_loss(ps, audio24):
+            if ps not in label_cache:
+                ids = wproc.tokenizer(text_of[ps]).input_ids
+                ids = ids[1:] if ids and ids[0] == start_id else ids
+                label_cache[ps] = torch.tensor([ids], device=dev)
+            return whisper(input_features=whisper_features(audio24), labels=label_cache[ps]).loss
+
+        neutral_asr = {}
+        with torch.no_grad():
+            for ps in train_ps:
+                for v in VOICES:
+                    neutral_asr[(ps, v)] = asr_loss(ps, synthesize(ps, packs[v][len(ps) - 1].unsqueeze(0))).item()
+        print(f"neutral Whisper loss on training renders: {sum(neutral_asr.values()) / len(neutral_asr):.3f}")
+
     deltas = {e: torch.zeros(256, device=dev, requires_grad=True) for e in TARGETS}
     opt = torch.optim.Adam(deltas.values(), lr=args.lr * spread)
 
@@ -152,8 +202,11 @@ def main() -> int:
             for _ in range(args.batch):
                 ps, v = random.choice(train_ps), random.choice(VOICES)
                 style = (packs[v][len(ps) - 1] + deltas[e]).unsqueeze(0)
-                loss = torch.nn.functional.cross_entropy(judge_logits(synthesize(ps, style)).unsqueeze(0),
-                                                         torch.tensor([k], device=dev)) / args.batch
+                audio = synthesize(ps, style)
+                loss = torch.nn.functional.cross_entropy(judge_logits(audio).unsqueeze(0), torch.tensor([k], device=dev))
+                if asr_loss is not None:
+                    loss = loss + args.asr_weight * torch.relu(asr_loss(ps, audio) - neutral_asr[(ps, v)])
+                loss = loss / args.batch
                 loss.backward()
                 total += loss.item()
         opt.step()
@@ -168,10 +221,10 @@ def main() -> int:
     print("held-out P(target) with offsets:", {k: round(v, 3) for k, v in held_out.items()})
 
     out = {"judge": "emotion2vec/emotion2vec_plus_base", "radius": args.radius, "spread": spread,
-           "held_out_target_probability": held_out,
+           "asr_weight": args.asr_weight, "held_out_target_probability": held_out,
            "offsets": {e: [round(float(x), 6) for x in d.detach().cpu()] for e, d in deltas.items()}}
-    (args.voice_dir / "style_offsets.json").write_text(json.dumps(out) + "\n", encoding="utf-8")
-    print(f"wrote {args.voice_dir / 'style_offsets.json'}")
+    (args.voice_dir / args.out_name).write_text(json.dumps(out) + "\n", encoding="utf-8")
+    print(f"wrote {args.voice_dir / args.out_name}")
     return 0
 
 

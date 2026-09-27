@@ -125,6 +125,16 @@ Phase 2 also adds an emotion-token LoRA for NLLB, which translates `<emo=… a=�
 - Its final pass is faster: 207–252 ms p50.
 - End to end, offline p95 is 762–827 ms and real-time p50 is 696–860 ms.
 
+Phase 3 makes Kokoro-82M the TTS. It costs latency on CPU; the vocoder is 89% of its time.
+- **First chunk:** ~270–315 ms p50 at 6 threads, against 80–160 ms for Piper.
+- **End to end on jfk.wav:** 1130 ms p50 (Piper: 860 ms).
+- **Keeping it in check:** the first clause is capped at 3 words, and Kokoro's ~0.5 s of silence
+  around each clause is trimmed.
+- **Barge-in is off in this config.** It used to cancel the last translation whenever the same
+  speaker kept talking. Translations now queue, and Hindi runs 1.1–1.3× the English, so fast
+  speech builds a playout queue: the "Playout buffer" row.
+- **Next:** GPU execution providers (phase 4) for the vocoder, and adaptive pacing.
+
 | CMake option | Adds | Needs |
 |---|---|---|
 | `EE_WITH_WHISPER` | whisper.cpp streaming ASR | fetched automatically |
@@ -179,7 +189,10 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
 2. **Emotion in** (done). emotion2vec+ and the DistilRoBERTa lexical model replace the stand-ins,
    plus an NLLB-600M LoRA that reads the emotion control prefix. All are the defaults in
    `config/pipeline.engines.yaml`; `ml/README.md` has their scores.
-3. **Emotion out.** StyleTTS2 with style vectors and the ECAPA-TDNN voice print.
+3. **Emotion out** (in progress). Kokoro-82M (StyleTTS2 family) with controller-driven
+   durations, F0 and contour, learned per-emotion style offsets, and the ECAPA-TDNN voice print.
+   See `ml/README.md` for what transfers: arousal and dominance, not yet valence. Next:
+   GPU execution for its vocoder, adaptive pacing, and speaker-aware barge-in.
 4. **Closed loop & speed.** ECS-trained controller, wait-k streaming MT, INT8 everywhere, GPU
    execution providers.
 5. **Ship.** Desktop app, gRPC server, Android and Jetson builds, public benchmark report.

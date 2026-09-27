@@ -47,6 +47,22 @@ python ml/export/export_lexical_onnx.py --out models/emotion/distilroberta-emoti
 - **Licenses:** emotion2vec+ is under FunASR's model license (attribution). The DistilRoBERTa
   model card states no license, so clear it before shipping.
 
+The phase-3 voice models are exported the same way, each checked against its original.
+
+```bash
+python ml/export/export_kokoro_onnx.py --out models/tts/kokoro-82m-hi --espeak-lib <libespeak-ng.so.1>
+python ml/export/export_ecapa_onnx.py --out models/speaker/ecapa-voxceleb --check data/ravdess.jsonl
+python ml/train/learn_style_offsets.py --corpus data/mt_corpus.hi.jsonl --voice-dir models/tts/kokoro-82m-hi \
+    --espeak-lib <libespeak-ng.so.1> --asr-weight 1.0      # optional: per-emotion style offsets (GPU)
+```
+
+- **Kokoro-82M** (Apache-2.0) is exported with prosody controls and an exact conv STFT.
+  Kokoro's own ONNX STFT is approximate, so it is replaced. With neutral controls, the output
+  matches Kokoro's forward pass.
+- **ECAPA-TDNN** (SpeechBrain, Apache-2.0) matches SpeechBrain's embeddings with cosine 1.00000.
+- **`--espeak-lib`** should point at the espeak-ng the C++ runtime uses, so the golden phonemes
+  (`tests/golden/kokoro_g2p_hi.json`) test the C++ port and not an espeak version difference.
+
 ## Use
 
 `config/pipeline.engines.yaml` refers to these ids (`model_id: asr.whisper.base.q5_1`). A stage can

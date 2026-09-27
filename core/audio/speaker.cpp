@@ -35,17 +35,27 @@ float voice_print_f0(const SpeakerEmbedding& print) noexcept {
 }
 
 std::unique_ptr<ISpeakerEncoder> make_speaker_encoder(const Params& params, const ModelRegistry* registry) {
-    (void)registry;
     const std::string kind = params.str("encoder", "pitch");
     if (kind == "pitch") return std::make_unique<PitchSpeakerEncoder>();
-    throw ConfigError("speaker encoder '" + kind +
-                      "' is not available yet (ECAPA-TDNN arrives with roadmap phase 3; use 'pitch')");
+    if (kind == "ecapa") {
+#if defined(EE_HAVE_ONNXRUNTIME)
+        const std::string path = resolve_model_path(params, registry, "model");
+        if (path.empty()) throw ConfigError("speaker encoder 'ecapa' needs a 'model' or 'model_id'");
+        return make_ecapa_encoder(path, params, registry);
+#else
+        (void)registry;
+        throw ConfigError("speaker encoder 'ecapa' needs a build with -DEE_WITH_ONNXRUNTIME=ON");
+#endif
+    }
+    (void)registry;
+    throw ConfigError("unknown speaker encoder '" + kind + "' (pitch | ecapa)");
 }
 
 void SpeakerStage::open(StageContext& ctx) {
     ctx_ = &ctx;
     rate_ = ctx.pipeline().sample_rate;
     encoder_ = make_speaker_encoder(ctx.params(), ctx.services().models);
+    pitch_encoder_ = ctx.params().str("encoder", "pitch") == "pitch";
     max_samples_ = static_cast<std::size_t>(ctx.params().number("max_seconds", 2.0) * rate_);
     audio_.reserve(max_samples_);
 }
@@ -65,6 +75,10 @@ void SpeakerStage::process(Frame& f) {
     out.copy_header_from(f);
     out.flags = frame_flags::kFinal;
     out.voice = print;
+    // The median F0 travels on its own: TTS voices are matched on it whatever the encoder.
+    // ECAPA cosine picks the right gender for only 11/24 RAVDESS actors against Kokoro's
+    // synthetic Hindi voices; F0 picks it for 23/24.
+    out.voice_f0 = voice_print_f0(pitch_encoder_ ? print : PitchSpeakerEncoder().embed(audio_, rate_));
     ctx_->emit(out);
     audio_.clear();
 }

@@ -54,7 +54,7 @@ set(EE_AUDIO_SOURCES
     audio/wav.cpp)
 set(EE_AUDIO_DEPS ee::runtime)
 if(EE_WITH_ONNXRUNTIME)
-    list(APPEND EE_AUDIO_SOURCES audio/silero_detector.cpp)
+    list(APPEND EE_AUDIO_SOURCES audio/ecapa_encoder.cpp audio/silero_detector.cpp)
 endif()
 if(EE_WITH_MINIAUDIO)
     list(APPEND EE_AUDIO_SOURCES audio/device.cpp)
@@ -122,6 +122,7 @@ set(EE_TTS_SOURCES
     tts/clause_chunker.cpp
     tts/formant_synth.cpp
     tts/kokoro_g2p.cpp
+    tts/text_filter.cpp
     tts/tts_stage.cpp)
 set(EE_TTS_DEPS ee::translate ee::audio ee::prosody ee::runtime)
 if(EE_WITH_PIPER)

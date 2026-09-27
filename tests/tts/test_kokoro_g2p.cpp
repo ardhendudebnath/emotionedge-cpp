@@ -9,6 +9,7 @@
 #include <fstream>
 
 #include "core/tts/kokoro_g2p.hpp"
+#include "core/tts/text_filter.hpp"
 #if defined(EE_HAVE_PIPER)
 #include "core/tts/espeak.hpp"
 #endif
@@ -57,6 +58,21 @@ TEST(KokoroG2p, MergesTiesAndRestoresParentheses) {
     EXPECT_EQ(misaki_g2p("(a)", fake), "(\xCA\xA7" "a\xCB\x90)");
     // Hyphens and remaining ties are dropped.
     EXPECT_EQ(misaki_g2p("x", [](const std::string&) { return std::string("k-a\xCD\xA1" "b"); }), "kab");
+}
+
+// espeak-ng 1.51 overflows a buffer on some emoji: they are removed before phonemization.
+TEST(TextFilter, RemovesEmojiButKeepsIndicJoiners) {
+    // "इतने कि मैं रोक नहीं सकता ❤️❤️❤️", the NLLB output that crashed espeak-ng
+    EXPECT_EQ(remove_emoji("\xE0\xA4\x87\xE0\xA4\xA4\xE0\xA4\xA8\xE0\xA5\x87 \xE2\x9D\xA4\xEF\xB8\x8F\xE2\x9D\xA4\xEF\xB8\x8F"),
+              "\xE0\xA4\x87\xE0\xA4\xA4\xE0\xA4\xA8\xE0\xA5\x87");
+    EXPECT_EQ(remove_emoji("ok \xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD fine"), "ok fine");  // thumbs up + skin tone
+    EXPECT_EQ(remove_emoji("\xF0\x9F\x87\xAE\xF0\x9F\x87\xB3 flag"), "flag");        // regional indicators
+    // Family: man ZWJ woman ZWJ girl -> nothing left.
+    EXPECT_EQ(remove_emoji("\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"), "");
+    // क्‍ष: a ZWJ inside a Devanagari conjunct is text.
+    const std::string conjunct = "\xE0\xA4\x95\xE0\xA5\x8D\xE2\x80\x8D\xE0\xA4\xB7";
+    EXPECT_EQ(remove_emoji(conjunct), conjunct);
+    EXPECT_EQ(remove_emoji("plain text, no change."), "plain text, no change.");
 }
 
 #if defined(EE_HAVE_PIPER)
