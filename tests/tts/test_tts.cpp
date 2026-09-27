@@ -23,6 +23,19 @@ TEST(ClauseChunker, SplitsAtClausePunctuationKeepingAShortFirstClause) {
     EXPECT_EQ(clauses[1].emphasis, (std::vector<std::uint16_t>{6}));  // "sofa." is word 12 overall
 }
 
+// A capped first clause: first audio after a few words, the rest kept whole, emphasis remapped.
+TEST(ClauseChunker, CapsTheFirstClauseForSlowTts) {
+    ChunkerConfig cfg;
+    cfg.max_first_words = 3;
+    const auto clauses = chunk_clauses("I really cannot believe you did this to me", "en", {4}, cfg);
+    ASSERT_EQ(clauses.size(), 2u);
+    EXPECT_EQ(clauses[0].text, "I really cannot");
+    EXPECT_EQ(clauses[1].text, "believe you did this to me");
+    EXPECT_EQ(clauses[1].emphasis, (std::vector<std::uint16_t>{1}));  // "you"
+    // Never leaves fewer than two words behind.
+    EXPECT_EQ(chunk_clauses("one two three four", "en", {}, cfg).size(), 1u);
+}
+
 TEST(ClauseChunker, HandlesDevanagariAndRunOnText) {
     const auto hindi = chunk_clauses("मुझे बहुत अफ़सोस है। मेरा इरादा तुम्हें दुख पहुँचाने का नहीं था।", "hi", {2});
     ASSERT_EQ(hindi.size(), 2u);

@@ -70,7 +70,12 @@ void RecorderStage::process(Frame& f) {
         r.correction = f.delta;
         break;
     }
-    case FrameKind::Feedback: record(f.utterance).ecs.push_back(f.score); break;
+    case FrameKind::Feedback: {
+        UtteranceRecord& r = record(f.utterance);
+        r.ecs.push_back(f.score);
+        r.output_emotion.push_back(f.emotion);
+        break;
+    }
     case FrameKind::Playout: {
         UtteranceRecord& r = record(f.utterance);
         r.out_start = f.out_start;
@@ -184,6 +189,13 @@ std::string to_session_json(const std::vector<UtteranceRecord>& records, const P
         u["closed_loop_correction"] = vad_json(r.correction);
         u["ecs"] = r.ecs;
         if (!r.ecs.empty()) u["ecs_mean"] = r.ecs_mean();
+        json heard = json::array();  // what 5.2 measured on the synthesized clauses
+        for (const EmotionState& e : r.output_emotion) {
+            json one = vad_json(e.vad);
+            one["label"] = to_string(e.label);
+            heard.push_back(std::move(one));
+        }
+        u["output_emotion"] = std::move(heard);
         if (r.out_start >= 0.0) u["output"] = {{"start", r.out_start}, {"end", r.out_end}};
         utterances.push_back(std::move(u));
     }

@@ -121,10 +121,11 @@ ee_add_module(translate SOURCES ${EE_TRANSLATE_SOURCES} PUBLIC_DEPS ${EE_TRANSLA
 set(EE_TTS_SOURCES
     tts/clause_chunker.cpp
     tts/formant_synth.cpp
+    tts/kokoro_g2p.cpp
     tts/tts_stage.cpp)
 set(EE_TTS_DEPS ee::translate ee::audio ee::prosody ee::runtime)
 if(EE_WITH_PIPER)
-    list(APPEND EE_TTS_SOURCES tts/piper_engine.cpp)
+    list(APPEND EE_TTS_SOURCES tts/espeak.cpp tts/kokoro_engine.cpp tts/piper_engine.cpp)
     list(APPEND EE_TTS_DEPS ee::piper)
 endif()
 ee_add_module(tts SOURCES ${EE_TTS_SOURCES} PUBLIC_DEPS ${EE_TTS_DEPS} PRIVATE_DEPS nlohmann_json::nlohmann_json)

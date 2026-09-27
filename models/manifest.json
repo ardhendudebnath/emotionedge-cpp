@@ -83,6 +83,19 @@
       "sidecars": ["https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"]
     },
     {
+      "id": "tts.kokoro.82m.hi",
+      "task": "tts",
+      "format": "kokoro",
+      "path": "tts/kokoro-82m-hi",
+      "check_file": "model.onnx",
+      "sha256": "",
+      "languages": ["hi"],
+      "devices": ["cpu", "cuda"],
+      "precision": "fp32",
+      "license": "Apache-2.0 (hexgrad/Kokoro-82M)",
+      "source": "convert:ml/export/export_kokoro_onnx.py"
+    },
+    {
       "id": "emotion.acoustic.emotion2vec_plus_base",
       "task": "emotion.acoustic",
       "format": "onnx",
