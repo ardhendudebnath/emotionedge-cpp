@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "emotionedge",
+  "version": "0.1.0",
+  "description": "Real-time, emotion-preserving speech translation on the edge",
+  "homepage": "https://github.com/ardhendudebnath/emotionedge-cpp",
+  "dependencies": [
+    "nlohmann-json",
+    "yaml-cpp"
+  ],
+  "default-features": [
+    "tests"
+  ],
+  "features": {
+    "tests": {
+      "description": "GoogleTest unit and golden-audio tests",
+      "dependencies": [
+        "gtest"
+      ]
+    },
+    "onnxruntime": {
+      "description": "ONNX Runtime engines (Silero VAD, emotion2vec head, Piper voices)",
+      "dependencies": [
+        "onnxruntime"
+      ]
+    },
+    "whisper": {
+      "description": "whisper.cpp streaming ASR",
+      "dependencies": [
+        "whisper-cpp"
+      ]
+    },
+    "translation": {
+      "description": "SentencePiece for the CTranslate2 adapter; CTranslate2 itself has no vcpkg port and is built from source",
+      "dependencies": [
+        "sentencepiece"
+      ]
+    },
+    "audio": {
+      "description": "miniaudio live capture and playback",
+      "dependencies": [
+        "miniaudio"
+      ]
+    }
+  }
+}

@@ -1,0 +1,51 @@
+# Fixture for the stand-in "phrasebook" translator used by tests and the demo. It is not a
+# translation model: unknown sentences come out as a visible pseudo-translation ("[hi] ...").
+# `emphasis` links a source word to its target word so emphasis spans carry over (3.2).
+#
+# The segmenter ends an utterance at pauses longer than its 160 ms hangover, which often means
+# at a comma, so clauses are listed as well as whole sentences.
+
+pairs:
+  en-hi:
+    - src: "I can't believe you did this!"   # blueprint p.3 walkthrough
+      tgt: "मुझे यकीन नहीं हो रहा कि तुमने ऐसा किया!"
+      emphasis: { believe: यकीन }
+    - src: "I'm so sorry, I didn't mean to hurt you."
+      tgt: "मुझे बहुत अफ़सोस है, मेरा इरादा तुम्हें दुख पहुँचाने का नहीं था।"
+      emphasis: { sorry: अफ़सोस }
+    - src: "I'm so sorry,"
+      tgt: "मुझे बहुत अफ़सोस है,"
+      emphasis: { sorry: अफ़सोस }
+    - src: "I didn't mean to hurt you."
+      tgt: "मेरा इरादा तुम्हें दुख पहुँचाने का नहीं था।"
+      emphasis: { hurt: दुख }
+    - src: "This is amazing, thank you so much!"
+      tgt: "यह तो कमाल है, बहुत-बहुत धन्यवाद!"
+      emphasis: { amazing: कमाल }
+    - src: "This is amazing,"
+      tgt: "यह तो कमाल है,"
+      emphasis: { amazing: कमाल }
+    - src: "thank you so much!"
+      tgt: "बहुत-बहुत धन्यवाद!"
+
+  en-es:
+    - src: "I can't believe you did this!"
+      tgt: "¡No puedo creer que hayas hecho esto!"
+      emphasis: { believe: creer }
+    - src: "I'm so sorry, I didn't mean to hurt you."
+      tgt: "Lo siento mucho, no quise hacerte daño."
+      emphasis: { sorry: siento }
+    - src: "I'm so sorry,"
+      tgt: "Lo siento mucho,"
+      emphasis: { sorry: siento }
+    - src: "I didn't mean to hurt you."
+      tgt: "No quise hacerte daño."
+      emphasis: { hurt: daño }
+    - src: "This is amazing, thank you so much!"
+      tgt: "¡Esto es increíble, muchísimas gracias!"
+      emphasis: { amazing: increíble }
+    - src: "This is amazing,"
+      tgt: "¡Esto es increíble,"
+      emphasis: { amazing: increíble }
+    - src: "thank you so much!"
+      tgt: "¡Muchísimas gracias!"

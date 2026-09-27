@@ -1,0 +1,20 @@
+# Offline ML factory (P1-P5). Never needed at runtime: the C++ core has no Python dependency.
+# The metric/gate/manifest tools (emotionedge_ml, eval/, export/write_manifest.py) use only the
+# standard library; everything below is for training, compression, export and full evaluation.
+numpy>=1.26
+soundfile>=0.12
+torch>=2.3
+torchaudio>=2.3
+transformers>=4.44
+peft>=0.12
+sentencepiece>=0.2
+onnx>=1.16
+onnxruntime>=1.18
+onnxsim>=0.4
+optimum[onnxruntime]>=1.21
+ctranslate2>=4.4
+huggingface_hub>=0.24
+sacrebleu>=2.4
+unbabel-comet>=2.2
+jiwer>=3.0
+cryptography>=42  # manifest signing

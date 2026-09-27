@@ -1,0 +1,159 @@
+# EmotionEdge pipeline graph (blueprint p.1), one stage per numbered box. Stages only talk
+# through lock-free SPSC queues (the edges below); each thread runs the stages assigned to it,
+# following the blueprint's threading model (p.2). T0 is the audio device callback and T7 the
+# telemetry flush thread; both are created by the runtime, not listed here.
+#
+# This default wiring uses the built-in stand-in engines (scripted ASR, phrasebook MT, formant
+# TTS, prosody/lexicon emotion), so it runs with no model files. pipeline.engines.yaml swaps in
+# Silero VAD, whisper.cpp, NLLB-200 via CTranslate2 and Piper.
+#
+# Paths may use ${config_dir} (this file's directory). Any parameter can be overridden from the
+# command line: `emotionedge run --set translate.engine=ct2 --set pipeline.target_language=es`.
+
+pipeline:
+  name: emotionedge-default
+  source_language: en
+  target_language: hi
+  sample_rate: 16000
+  models: ${config_dir}/../models/manifest.json
+
+telemetry:
+  flush_ms: 1000
+
+threads:
+  - { name: T1-dsp-vad,    core: 1, priority: high }      # DSP + VAD, 20 ms tick
+  - { name: T2-asr,        core: 2, priority: high }      # streaming ASR (engine uses its own workers)
+  - { name: T3-emotion,    core: 6, priority: high }      # emotion engine, speaker encoder, 5.2
+  - { name: T4-understand, core: 7, priority: high }      # state + MT + controller
+  - { name: T5-tts,        core: 8, priority: high }      # TTS + vocoder
+  - { name: T6-playback,   core: 9, priority: realtime }  # jitter buffer, outputs
+
+stages:
+  # ---- 01 CAPTURE ------------------------------------------------------------------------------
+  - name: frontend            # 1.1 audio capture + 1.2 front-end DSP
+    type: frontend
+    thread: T1-dsp-vad
+    tick_ms: 20
+    params:
+      frame_ms: 20
+      agc: { enabled: true, target_dbfs: -23, max_gain_db: 18, attack_s: 3.0, release_s: 8.0 }
+      noise_suppressor: none  # RNNoise slot
+      echo_canceller: none    # WebRTC AEC3 slot (reference = our own TTS, fed by playback)
+
+  - name: segmenter           # 1.3 VAD & segmenter
+    type: segmenter
+    thread: T1-dsp-vad
+    params:
+      detector: energy        # silero in pipeline.engines.yaml
+      threshold_on: 0.5
+      threshold_off: 0.35
+      min_speech_ms: 90
+      hangover_ms: 160        # endpointing, 160 ms hangover
+      preroll_ms: 200
+      max_utterance_s: 15
+
+  - name: speaker             # 1.4 speaker encoder -> voice print for the TTS
+    type: speaker
+    thread: T3-emotion
+    params: { encoder: pitch, max_seconds: 2 }
+
+  # ---- 02 PERCEIVE -----------------------------------------------------------------------------
+  - name: asr                 # 2.1 streaming ASR (LocalAgreement-2)
+    type: asr
+    thread: T2-asr
+    params:
+      engine: scripted        # needs `script`; whisper in pipeline.engines.yaml
+      script: ""
+      partial_interval_ms: 500
+      min_partial_ms: 1000
+      agreement: 2
+
+  - name: emotion             # 2.2 emotion engine: acoustic + prosody + lexical, gated late fusion
+    type: emotion
+    thread: T3-emotion
+    params:
+      acoustic: prosody       # onnx = emotion2vec + V·A·D head (phase 2)
+      lexical: lexicon        # DistilRoBERTa (phase 2)
+      window_ms: 1000
+      hop_ms: 500
+      ema_alpha: 0.5
+      final_alpha: 0.8
+
+  # ---- 03 UNDERSTAND ---------------------------------------------------------------------------
+  - name: state               # 3.1 context & emotion state (hysteresis, emphasis)
+    type: state
+    thread: T4-understand
+    tick_ms: 10
+    params:
+      join_timeout_ms: 150
+      hysteresis: { margin: 0.08, strong_margin: 0.25, updates: 2 }
+      emphasis: { z: 1.0, min_rise_db: 3.0, max_words: 2 }
+
+  - name: translate           # 3.2 emotion-aware translation, with 3.3 expressivity profiles
+    type: translate
+    thread: T4-understand
+    params:
+      engine: phrasebook      # ct2 (NLLB-200) in pipeline.engines.yaml
+      phrasebook: ${config_dir}/phrasebook.yaml
+      expressivity: ${config_dir}/expressivity.yaml
+      neutral_threshold: 0.35 # "neutral fallback if conf < τ"
+      control_tokens: auto    # on once the NLLB LoRA with emotion tokens (P2) is in use
+      register: auto          # from the target language's expressivity profile
+      drafts: true
+      wait_k: 3
+
+  # ---- 04 EXPRESS ------------------------------------------------------------------------------
+  - name: controller          # 4.1 emotion controller (rules v1 + closed loop)
+    type: controller
+    thread: T4-understand
+    params:
+      expressivity: ${config_dir}/expressivity.yaml
+      confidence_floor: 0.30
+      confidence_full: 0.75
+      ecs_threshold: 0.75
+      loop_gain: 0.6
+      loop_decay: 0.5
+
+  - name: tts                 # 4.2 expressive TTS, clause-boundary chunker
+    type: tts
+    thread: T5-tts
+    tick_ms: 5
+    params:
+      engine: formant         # piper in pipeline.engines.yaml; StyleTTS2 in phase 3
+      sample_rate: 24000
+      chunk_ms: 100
+
+  # ---- 05 DELIVER ------------------------------------------------------------------------------
+  - name: playback            # 5.1 jitter buffer, crossfade, AEC reference
+    type: playback
+    thread: T6-playback
+    tick_ms: 5
+    params:
+      jitter_ms: 60
+      crossfade_ms: 5
+      offline_latency_ms: 735 # where offline runs place speech: source end + the latency budget
+
+  - name: consistency         # 5.2 emotion consistency (ECS) -> closed loop to 4.1
+    type: consistency
+    thread: T3-emotion
+    params: { acoustic: prosody, lexical: lexicon, threshold: 0.75 }
+
+  - name: recorder            # 5.3 outputs: captions with emotion tags, session export
+    type: recorder
+    thread: T6-playback
+    params: { srt: "", json: "", emotion_tags: true }
+
+edges:
+  - { from: frontend,    to: segmenter, capacity: 256 }
+  - { from: segmenter,   to: [asr, emotion, speaker], kinds: [audio], capacity: 512 }
+  - { from: segmenter,   to: [tts, playback], kinds: [control] }                 # barge-in
+  - { from: speaker,     to: tts, kinds: [voiceprint] }                          # voice print
+  - { from: asr,         to: [emotion, state, translate, recorder], kinds: [transcript] }
+  - { from: emotion,     to: state, kinds: [emotion] }
+  - { from: state,       to: [translate, recorder], kinds: [utterance] }
+  - { from: translate,   to: [controller, recorder], kinds: [translation] }
+  - { from: controller,  to: [tts, recorder], kinds: [speech] }
+  - { from: tts,         to: [playback, consistency], kinds: [synthaudio], capacity: 256 }
+  - { from: consistency, to: controller, kinds: [feedback], feedback: true }    # closed loop
+  - { from: consistency, to: recorder, kinds: [feedback] }
+  - { from: playback,    to: recorder, kinds: [playout] }
