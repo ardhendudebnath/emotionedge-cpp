@@ -219,12 +219,21 @@ ModalityEstimate LexiconEmotionModel::estimate(std::string_view text, std::strin
 }
 
 std::unique_ptr<ILexicalEmotionModel> make_lexical_model(const Params& params, const ModelRegistry* registry) {
-    (void)registry;
     const std::string kind = params.str("lexical", "lexicon");
     if (kind == "lexicon") return std::make_unique<LexiconEmotionModel>();
     if (kind == "none") return nullptr;
-    throw ConfigError("unknown lexical emotion model '" + kind +
-                      "' (lexicon | none; DistilRoBERTa arrives with roadmap phase 2)");
+    if (kind == "onnx") {
+#if defined(EE_HAVE_ONNXRUNTIME)
+        const std::string dir = resolve_model_path(params, registry, "lexical_model");
+        if (dir.empty()) throw ConfigError("lexical 'onnx' needs 'lexical_model' or 'lexical_model_id'");
+        return make_onnx_lexical_model(dir, params, registry);
+#else
+        (void)registry;
+        throw ConfigError("lexical 'onnx' needs a build with -DEE_WITH_ONNXRUNTIME=ON");
+#endif
+    }
+    (void)registry;
+    throw ConfigError("unknown lexical emotion model '" + kind + "' (lexicon | onnx | none)");
 }
 
 }  // namespace ee

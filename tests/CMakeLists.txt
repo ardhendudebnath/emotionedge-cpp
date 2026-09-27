@@ -19,6 +19,7 @@ add_executable(ee_tests
     audio/test_frontend_playback.cpp
     audio/test_ring_wav_resampler.cpp
     audio/test_segmenter.cpp
+    emotion/test_classifier_models.cpp
     emotion/test_emotion_models.cpp
     emotion/test_emotion_stages.cpp
     pipeline/test_pipeline_e2e.cpp

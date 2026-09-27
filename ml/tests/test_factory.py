@@ -43,6 +43,19 @@ class EmotionSpaceTest(unittest.TestCase):
         with self.assertRaises(KeyError):
             es.label_to_vad("bored")
 
+    def test_classifier_label_map(self):
+        # emotion2vec+ class names: aliases, disgust's own position, and abstaining classes.
+        labels = ["angry", "disgusted", "fearful", "happy", "neutral", "other", "sad", "surprised", "<unk>"]
+        m = es.label_map(labels, reliability=(0.6, 0.9, 0.6), languages=["*"])
+        self.assertEqual(m["abstain"], ["other", "<unk>"])
+        self.assertEqual(m["neutral"], "neutral")
+        self.assertEqual(tuple(m["vad"]["angry"]), es.PROTOTYPES["anger"])
+        self.assertEqual(tuple(m["vad"]["disgusted"]), es.EXTRA_POSITIONS["disgust"])
+        self.assertEqual(m["languages"], ["*"])
+        self.assertNotIn("other", m["vad"])
+        with self.assertRaises(KeyError):
+            es.label_map(["bored"])
+
 
 class MetricsTest(unittest.TestCase):
     def test_wer_ignores_case_and_punctuation(self):

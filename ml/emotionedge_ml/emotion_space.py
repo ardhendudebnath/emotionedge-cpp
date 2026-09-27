@@ -34,6 +34,35 @@ DATASET_LABELS: Dict[str, str] = {
 }
 
 
+# Classifier class names (emotion2vec+, DistilRoBERTa) -> a position in the space. The blueprint
+# labels use their prototypes; disgust, which the blueprint lacks, takes Mehrabian & Russell's
+# (1977) PAD rating for "disgusted" rather than being folded into anger.
+CLASS_ALIASES: Dict[str, str] = {
+    "angry": "anger", "happy": "joy", "sad": "sadness", "fearful": "fear", "surprised": "surprise",
+    "disgusted": "disgust",
+}
+EXTRA_POSITIONS: Dict[str, Vad] = {"disgust": (-0.60, 0.35, 0.11)}
+ABSTAIN_CLASSES = ("other", "unknown", "<unk>", "unk")
+
+
+def class_position(name: str) -> Vad:
+    """V·A·D position of a classifier class; raises KeyError for classes without one."""
+    key = CLASS_ALIASES.get(name.strip().lower(), name.strip().lower())
+    return PROTOTYPES[key] if key in PROTOTYPES else EXTRA_POSITIONS[key]
+
+
+def label_map(labels: Sequence[str], reliability: Sequence[float] = (1.0, 1.0, 1.0), **extra) -> dict:
+    """The `labels.json` a classifier ships with, read by core/emotion/class_mapping.cpp.
+
+    Classes in ABSTAIN_CLASSES carry no emotion evidence; every other class needs a position.
+    `extra` adds model-specific fields (e.g. languages, max_tokens)."""
+    abstain = [name for name in labels if name.strip().lower() in ABSTAIN_CLASSES]
+    positions = {name: list(class_position(name)) for name in labels if name not in abstain}
+    neutral = next((name for name in labels if name.strip().lower() == "neutral"), "")
+    return {"labels": list(labels), "vad": positions, "abstain": abstain, "neutral": neutral,
+            "reliability": list(reliability), **extra}
+
+
 def distance(x: Sequence[float], y: Sequence[float]) -> float:
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(x, y)))
 

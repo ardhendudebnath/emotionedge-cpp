@@ -35,6 +35,10 @@ RULES: Dict[str, Rule] = {
     "bleu": Rule(True, 0.5),
     "comet": Rule(True, 0.005),
     "emotion_f1": Rule(True, 0.01),
+    # ml/eval/eval_emotion.py on the C++ models: RAVDESS (voice) and MELD test (words).
+    "emotion_uar_acoustic": Rule(True, 0.01),
+    "emotion_uar_lexical": Rule(True, 0.01),
+    "chrf": Rule(True, 0.5),
     "ccc_valence": Rule(True, 0.01),
     "ccc_arousal": Rule(True, 0.01),
     "ccc_dominance": Rule(True, 0.01),

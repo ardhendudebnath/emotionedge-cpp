@@ -35,7 +35,7 @@ for the real engines.
 | Box | Code | Status |
 |---|---|---|
 | 2.1 Streaming ASR: whisper.cpp, LocalAgreement-2, partial + final, word timestamps, language ID | `asr/local_agreement.cpp`, `asr/asr_stage.cpp`, `asr/whisper_engine.cpp` | **done**; scripted **stand-in**; whisper.cpp **adapter** (`EE_WITH_WHISPER`) |
-| 2.2 Emotion engine: acoustic (emotion2vec), prosody (F0 · energy · rate · jitter), lexical (DistilRoBERTa), gated late fusion, EMA | `emotion/prosody_features.cpp`, `emotion/acoustic.cpp`, `emotion/onnx_acoustic.cpp`, `emotion/lexical.cpp`, `emotion/fusion.cpp`, `emotion/emotion_stage.cpp` | fusion, EMA, prosody features (YIN F0) **done**; prosody-rules and lexicon **stand-ins**; emotion2vec+head ONNX **adapter**; DistilRoBERTa **planned** (phase 2) |
+| 2.2 Emotion engine: acoustic (emotion2vec), prosody (F0 · energy · rate · jitter), lexical (DistilRoBERTa), gated late fusion, EMA | `emotion/prosody_features.cpp`, `emotion/acoustic.cpp`, `emotion/onnx_acoustic.cpp`, `emotion/lexical.cpp`, `emotion/fusion.cpp`, `emotion/emotion_stage.cpp` | fusion, EMA, prosody features (YIN F0) **done**; emotion2vec+ base and DistilRoBERTa (with a C++ byte-level BPE tokenizer) through ONNX Runtime **done** (phase 2: classifiers mapped to V·A·D by `emotion/class_mapping.cpp`); prosody-rules and lexicon remain as **stand-ins** for builds without ORT |
 
 ### 03 · Understand
 
@@ -57,7 +57,7 @@ for the real engines.
 | Box | Code | Status |
 |---|---|---|
 | 5.1 Playback: 60 ms jitter buffer, chunk crossfade, AEC reference, source ducking | `audio/playback.cpp`, `pipeline/session.cpp` (`mix_with_ducking`) | **done** |
-| 5.2 Emotion consistency: ECS = 1 − ‖ΔVAD‖/2√3, nudge 4.1 below threshold, log per utterance | `emotion/consistency_stage.cpp`, `telemetry/ecs.hpp` | **done** |
+| 5.2 Emotion consistency: ECS = 1 − ‖ΔVAD‖/2√3, nudge 4.1 below threshold, log per utterance | `emotion/consistency_stage.cpp`, `telemetry/ecs.hpp` | **done**; with the engines config the output is judged by emotion2vec+ (language-agnostic, one session shared with 2.2) |
 | 5.3 Outputs: speaker, live captions with emotion tags, gRPC/WebSocket, CLI/desktop, WAV + SRT/JSON | `pipeline/recorder.cpp`, `apps/cli` | CLI, WAV, SRT, JSON **done**; gRPC/WebSocket and desktop **planned** (phase 5) |
 
 ## Edge runtime (cross-cutting)

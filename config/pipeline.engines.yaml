@@ -21,7 +21,7 @@ telemetry:
 threads:
   - { name: T1-dsp-vad,    cores: [1],              priority: high }
   - { name: T2-asr,        cores: [2, 3, 4, 5],     priority: high }   # blueprint: 4 ASR worker cores
-  - { name: T3-emotion,    cores: [6],              priority: high }
+  - { name: T3-emotion,    cores: [6, 14, 15, 16],  priority: high }   # emotion2vec+ x2, DistilRoBERTa
   - { name: T4-understand, cores: [7, 8, 9, 10],    priority: high }
   - { name: T5-tts,        cores: [11, 12],         priority: high }
   - { name: T6-playback,   cores: [13],             priority: realtime }
@@ -65,7 +65,21 @@ stages:
   - name: emotion
     type: emotion
     thread: T3-emotion
-    params: { acoustic: prosody, lexical: lexicon }
+    params:
+      # Phase 2 "emotion in": emotion2vec+ on the voice, DistilRoBERTa on the words. Both are
+      # classifiers mapped to V·A·D by their labels.json. The prosody rules and the lexicon are
+      # the stand-ins (acoustic: prosody, lexical: lexicon).
+      acoustic: onnx
+      acoustic_model_id: emotion.acoustic.emotion2vec_plus_base
+      acoustic_max_seconds: 6     # the utterance's last 6 s; cost grows with length
+      lexical: onnx
+      lexical_model_id: emotion.lexical.distilroberta_en
+      threads: 4
+      # emotion2vec+ also reads valence from the voice, unlike the prosody rules (0.3). Text is
+      # still the stronger valence cue, but less so on arousal and dominance.
+      fusion:
+        acoustic: { valence: 0.7, arousal: 1.0, dominance: 0.8 }
+        lexical: { valence: 0.8, arousal: 0.5, dominance: 0.4 }
 
   - name: state
     type: state
@@ -110,7 +124,14 @@ stages:
   - name: consistency
     type: consistency
     thread: T3-emotion
-    params: { acoustic: prosody, lexical: lexicon, threshold: 0.75 }
+    params:
+      # Judges the synthesized speech with the same voice model as 2.2. The English lexical
+      # model abstains on the Hindi output, so no lexical model here.
+      acoustic: onnx
+      acoustic_model_id: emotion.acoustic.emotion2vec_plus_base
+      lexical: none
+      threads: 4
+      threshold: 0.75
 
   - name: recorder
     type: recorder
