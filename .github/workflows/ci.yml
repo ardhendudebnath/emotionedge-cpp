@@ -83,10 +83,10 @@ jobs:
       CT2_VERSION: 4.8.2
     steps:
       - uses: actions/checkout@v4
-      - name: System packages (espeak-ng, SentencePiece, OpenBLAS)
+      - name: System packages (espeak-ng, SentencePiece, OpenBLAS, oneDNN)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libespeak-ng-dev libsentencepiece-dev libopenblas-dev
+          sudo apt-get install -y --no-install-recommends libespeak-ng-dev libsentencepiece-dev libopenblas-dev libdnnl-dev
       - name: ONNX Runtime ${{ env.ORT_VERSION }}
         run: |
           curl -fsSL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
@@ -97,14 +97,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/ct2
-          key: ct2-${{ env.CT2_VERSION }}-openblas-ruy-ubuntu-24.04
+          key: ct2-${{ env.CT2_VERSION }}-openblas-dnnl-ubuntu-24.04
       - name: Build CTranslate2 ${{ env.CT2_VERSION }}
         if: steps.ct2-cache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch "v${CT2_VERSION}" --recursive --shallow-submodules \
             https://github.com/OpenNMT/CTranslate2.git /tmp/ct2
           cmake -S /tmp/ct2 -B /tmp/ct2/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/ct2" \
-            -DWITH_MKL=OFF -DWITH_OPENBLAS=ON -DWITH_RUY=ON -DOPENMP_RUNTIME=COMP -DBUILD_CLI=OFF
+            -DWITH_MKL=OFF -DWITH_DNNL=ON -DWITH_OPENBLAS=ON -DWITH_RUY=OFF -DOPENMP_RUNTIME=COMP -DBUILD_CLI=OFF \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5  # bundled cpu_features predates CMake 4
           cmake --build /tmp/ct2/build -j 4
           cmake --install /tmp/ct2/build
       - name: Configure with every adapter

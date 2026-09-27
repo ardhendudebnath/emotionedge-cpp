@@ -21,6 +21,7 @@ and some TTS weights are research-only.
 python models/fetch_models.py --list          # what is present / missing
 python models/fetch_models.py --pair en-hi    # download + verify everything en->hi needs
 python models/fetch_models.py --pin           # pin hashes of entries that have none yet
+python models/fetch_models.py --dest ~/ee-models --pair en-hi   # elsewhere; then --set pipeline.models=$HOME/ee-models/manifest.json
 ```
 
 NLLB-200 is converted rather than downloaded. `ml/export/convert_nllb_ct2.sh` turns

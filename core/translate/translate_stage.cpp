@@ -43,6 +43,9 @@ void TranslateStage::open(StageContext& ctx) {
         if (!register_) throw ConfigError("translate register must be auto, casual, formal or neutral");
     }
     const std::string tokens = p.str("control_tokens", "auto");
+    if (tokens != "auto" && tokens != "on" && tokens != "off") {
+        throw ConfigError("translate control_tokens must be auto, on or off (got '" + tokens + "')");
+    }
     token_mode_ = tokens == "on" ? TokenMode::On : tokens == "off" ? TokenMode::Off : TokenMode::Auto;
     drafts_ = p.flag("drafts", true);
     wait_k_ = WaitKPolicy(static_cast<int>(p.integer("wait_k", 3)),

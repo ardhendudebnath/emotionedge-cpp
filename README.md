@@ -87,7 +87,29 @@ On the stand-in engines this measures the runtime's own overhead, not the neural
 cmake --preset engines -DEE_ONNXRUNTIME_ROOT=/path/to/onnxruntime   # also needs CTranslate2 + espeak-ng
 python models/fetch_models.py --pair en-hi                          # whisper, Silero, Piper (+ convert NLLB)
 build/engines/apps/emotionedge run --input speech.wav --config config/pipeline.engines.yaml
+# no microphone recording at hand? speak test input with a Piper voice:
+build/engines/apps/emotionedge say --engine piper --model-id tts.piper.en_US.lessac.medium \
+    --text "I can't believe you did this! | I'm so sorry, I didn't mean to hurt you." --out speech.wav
 ```
+
+Build CTranslate2 with oneDNN (`-DWITH_DNNL=ON`, apt `libdnnl-dev`; see the `engines` CI job) or
+MKL. Its Ruy fallback runs NLLB INT8 about 1.7x slower on x86.
+
+Measured on CPU only (Core Ultra 9 275HX under WSL2) with Silero v6, whisper base q5_1, NLLB-200
+distilled-600M INT8 (oneDNN) and Piper `hi_IN-pratham-medium`, translating English into Hindi.
+Inputs were whisper.cpp's `jfk.wav` (11 s, 4 utterances) and 10 s of Piper speech (3 utterances).
+All 7 transcripts matched the speech.
+
+| Row | Budget | p50 offline / real time | p95 offline / real time |
+|---|---|---|---|
+| ASR final decode | 220 ms | 174–178 / 231–252 ms | 218–364 / 356–477 ms |
+| Translation, final pass | 120 ms | 260–365 / 291–389 ms | 373–504 / 406–479 ms |
+| TTS first chunk | 160 ms | 87–162 / 97–158 ms | 135–166 / 141–186 ms |
+| End to end | 800 ms (p95) | 520–696 / 795–942 ms | 795–890 / 1065–1229 ms |
+
+Peak RAM is 1.2 GB. The remaining gap is NLLB-600M: a CPU decodes it at 160–310 ms per
+sentence, even with MKL. Faster final passes need a GPU/NPU, a smaller or distilled MT model, or
+shorter segments.
 
 | CMake option | Adds | Needs |
 |---|---|---|

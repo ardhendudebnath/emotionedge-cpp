@@ -35,18 +35,28 @@ bool set_current_thread_name(std::string_view name) {
 #endif
 }
 
-bool pin_current_thread(int core) {
-    if (core < 0 || static_cast<unsigned>(core) >= hardware_threads()) return false;
+bool pin_current_thread(std::span<const int> cores) {
+    const unsigned n = hardware_threads();
 #if defined(_WIN32)
-    if (core >= 64) return false;
-    return SetThreadAffinityMask(GetCurrentThread(), DWORD_PTR{1} << core) != 0;
+    DWORD_PTR mask = 0;
+    for (int c : cores) {
+        if (c >= 0 && static_cast<unsigned>(c) < n && c < 64) mask |= DWORD_PTR{1} << c;
+    }
+    return mask != 0 && SetThreadAffinityMask(GetCurrentThread(), mask) != 0;
 #elif defined(__APPLE__)
+    (void)cores;
+    (void)n;
     return false;  // macOS offers affinity hints only, not pinning
 #else
     cpu_set_t set;
     CPU_ZERO(&set);
-    CPU_SET(static_cast<unsigned>(core), &set);
-    return pthread_setaffinity_np(pthread_self(), sizeof(set), &set) == 0;
+    bool any = false;
+    for (int c : cores) {
+        if (c < 0 || static_cast<unsigned>(c) >= n || c >= CPU_SETSIZE) continue;
+        CPU_SET(static_cast<unsigned>(c), &set);
+        any = true;
+    }
+    return any && pthread_setaffinity_np(pthread_self(), sizeof(set), &set) == 0;
 #endif
 }
 

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
 #include <queue>
 #include <set>
 #include <sstream>
@@ -134,7 +135,15 @@ PipelineSpec parse_pipeline(std::string_view yaml_text, const std::filesystem::p
         for (const auto& t : threads) {
             ThreadSpec ts;
             ts.name = scalar(t["name"], "threads[].name", dir);
-            if (t["core"]) ts.core = scalar_as<int>(t["core"], "threads[].core");
+            if (t["core"] && t["cores"]) throw ConfigError("thread '" + ts.name + "': give 'core' or 'cores', not both");
+            if (t["core"]) ts.cores.push_back(scalar_as<int>(t["core"], "threads[].core"));
+            if (const auto cores = t["cores"]) {
+                if (!cores.IsSequence()) throw ConfigError("thread '" + ts.name + "': 'cores' must be a list");
+                for (const auto& c : cores) ts.cores.push_back(scalar_as<int>(c, "threads[].cores[]"));
+            }
+            for (int c : ts.cores) {
+                if (c < 0) throw ConfigError("thread '" + ts.name + "': negative core " + std::to_string(c));
+            }
             if (t["priority"]) ts.priority = parse_priority(scalar(t["priority"], "priority", dir));
             spec.threads.push_back(std::move(ts));
         }
@@ -153,7 +162,7 @@ PipelineSpec parse_pipeline(std::string_view yaml_text, const std::filesystem::p
     }
 
     // Without explicit threads everything shares one thread (fine for offline runs).
-    if (spec.threads.empty()) spec.threads.push_back({"main", -1, ThreadPriority::Normal});
+    if (spec.threads.empty()) spec.threads.push_back({"main", {}, ThreadPriority::Normal});
     for (StageSpec& s : spec.stages) {
         if (s.thread.empty()) s.thread = spec.threads.front().name;
     }
@@ -223,18 +232,28 @@ void validate(const PipelineSpec& spec) {
     if (spec.stages.empty()) throw ConfigError("pipeline has no stages");
     if (spec.sample_rate <= 0) throw ConfigError("pipeline.sample_rate must be positive");
 
-    std::set<std::string, std::less<>> thread_names;
+    std::map<std::string, const ThreadSpec*, std::less<>> threads;
     for (const ThreadSpec& t : spec.threads) {
-        if (!thread_names.insert(t.name).second) throw ConfigError("duplicate thread '" + t.name + "'");
+        if (!threads.emplace(t.name, &t).second) throw ConfigError("duplicate thread '" + t.name + "'");
     }
     std::set<std::string, std::less<>> stage_names;
     for (const StageSpec& s : spec.stages) {
         if (s.name.empty()) throw ConfigError("stage with empty name");
         if (!stage_names.insert(s.name).second) throw ConfigError("duplicate stage '" + s.name + "'");
-        if (!thread_names.contains(s.thread)) {
+        const auto thread = threads.find(s.thread);
+        if (thread == threads.end()) {
             throw ConfigError("stage '" + s.name + "' uses unknown thread '" + s.thread + "'");
         }
         if (s.tick_ms < 0) throw ConfigError("stage '" + s.name + "' has negative tick_ms");
+        // Workers an engine starts from a pinned thread inherit its cores (whisper.cpp starts them
+        // on every decode). Four spinning workers on one core are far slower than one worker.
+        const std::size_t cores = thread->second->cores.size();
+        const std::int64_t workers = s.params.integer("threads", 0);
+        if (cores > 0 && workers > static_cast<std::int64_t>(cores)) {
+            throw ConfigError("stage '" + s.name + "' runs " + std::to_string(workers) + " worker threads but thread '" +
+                              s.thread + "' is pinned to " + std::to_string(cores) +
+                              " core(s), which the workers inherit: list more cores or lower 'threads'");
+        }
     }
     for (const EdgeSpec& e : spec.edges) {
         if (!stage_names.contains(e.from)) throw ConfigError("edge from unknown stage '" + e.from + "'");

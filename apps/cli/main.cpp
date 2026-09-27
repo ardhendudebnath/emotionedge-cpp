@@ -1,10 +1,12 @@
 // emotionedge: command-line front end for the EmotionEdge pipeline.
+#include <algorithm>
 #include <atomic>
 #include <csignal>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -22,6 +24,7 @@
 #include "core/runtime/model_registry.hpp"
 #include "core/telemetry/telemetry.hpp"
 #include "core/translate/languages.hpp"
+#include "core/tts/tts_engine.hpp"
 #if defined(EE_HAVE_MINIAUDIO)
 #include "core/audio/device.hpp"
 #endif
@@ -42,6 +45,8 @@ commands:
   live       Translate the microphone in real time (needs -DEE_WITH_MINIAUDIO=ON)
   devices    List audio devices (needs -DEE_WITH_MINIAUDIO=ON)
   models     List or verify model files:  models [list|verify] [--manifest FILE]
+  say        Speak text with a TTS engine into a WAV (test input for real ASR):
+             say --text "One. | Two." [--engine piper --model-id ID --manifest FILE] [--out F]
   stages     List the registered stage types
   version    Print the version
 
@@ -328,6 +333,51 @@ int cmd_stages() {
     return 0;
 }
 
+/// Speaks text with a TTS engine, e.g. to make test input for the real ASR:
+///   say --text "First sentence. | Second sentence." --engine piper --model-id tts.piper.en_US.lessac.medium
+int cmd_say(const Args& args) {
+    if (!args.has("text")) throw std::runtime_error("say needs --text \"...\" (use | between utterances)");
+    Params params;
+    params.set("engine", args.get("engine", "formant"));
+    for (const char* key : {"model", "model_id", "espeak_data", "voice_config", "speaker"}) {
+        std::string opt(key);
+        std::replace(opt.begin(), opt.end(), '_', '-');
+        if (args.has(opt)) params.set(key, args.get(opt));
+    }
+    std::unique_ptr<ModelRegistry> registry;
+    if (const fs::path manifest = args.get("manifest"); !manifest.empty()) {
+        registry = std::make_unique<ModelRegistry>(ModelRegistry::load(manifest));
+    }
+    auto engine = make_tts_engine(params, registry.get());
+    const double gap = std::stod(args.get("gap", "1.2"));
+    const std::string language = args.get("language", "en");
+
+    std::vector<float> audio(static_cast<std::size_t>(0.5 * engine->sample_rate()), 0.0f);
+    SynthesisResult result;
+    std::string text = args.get("text");
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t bar = text.find('|', start);
+        std::string sentence = text.substr(start, bar == std::string::npos ? std::string::npos : bar - start);
+        start = bar == std::string::npos ? text.size() + 1 : bar + 1;
+        sentence.erase(0, sentence.find_first_not_of(' '));
+        sentence.erase(sentence.find_last_not_of(' ') + 1);
+        if (sentence.empty()) continue;
+        SynthesisRequest req;
+        req.text = sentence;
+        req.language = language;
+        engine->synthesize(req, result);
+        audio.insert(audio.end(), result.audio.begin(), result.audio.end());
+        audio.insert(audio.end(), static_cast<std::size_t>(gap * engine->sample_rate()), 0.0f);
+    }
+    const fs::path out = args.get("out", "out/say.wav");
+    if (out.has_parent_path()) fs::create_directories(out.parent_path());
+    write_wav(out, audio, engine->sample_rate());
+    std::printf("wrote %s (%.1f s at %d Hz)\n", abs_path(out).c_str(),
+                static_cast<double>(audio.size()) / engine->sample_rate(), engine->sample_rate());
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -351,6 +401,7 @@ int main(int argc, char** argv) {
         if (args.command == "devices") return cmd_devices();
         if (args.command == "models") return cmd_models(args);
         if (args.command == "stages") return cmd_stages();
+        if (args.command == "say") return cmd_say(args);
         if (args.command == "version") {
             std::printf("emotionedge %s\n", EE_VERSION);
             return 0;

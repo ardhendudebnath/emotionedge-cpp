@@ -36,7 +36,9 @@ class Ct2Translator final : public ITranslator {
 public:
     Ct2Translator(const std::string& model_dir, const Params& params)
         : beam_(static_cast<std::size_t>(params.integer("beam", 2))),
-          control_tokens_(params.flag("control_tokens", false)) {
+          // Whether the model was trained on `<emo=...>` prefixes (the P3 fine-tune). The stage's
+          // `control_tokens: on` implies it; with `auto` vanilla NLLB gets plain text.
+          control_tokens_(params.flag("model_control_tokens", params.str("control_tokens", "auto") == "on")) {
         const std::string spm = params.str("sentencepiece", model_dir + "/sentencepiece.bpe.model");
         const auto status = sp_.Load(spm);
         if (!status.ok()) throw ConfigError("cannot load SentencePiece model '" + spm + "': " + status.ToString());

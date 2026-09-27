@@ -15,13 +15,16 @@ pipeline:
 telemetry:
   flush_ms: 1000
 
+# Worker threads an engine starts from its stage's thread inherit that thread's cores (whisper.cpp
+# starts its workers on every decode), so each set must cover the stage's `threads`. The config
+# is rejected otherwise. Cores that do not exist on the machine are skipped; adjust to your CPU.
 threads:
-  - { name: T1-dsp-vad,    core: 1, priority: high }
-  - { name: T2-asr,        core: 2, priority: high }
-  - { name: T3-emotion,    core: 6, priority: high }
-  - { name: T4-understand, core: 7, priority: high }
-  - { name: T5-tts,        core: 8, priority: high }
-  - { name: T6-playback,   core: 9, priority: realtime }
+  - { name: T1-dsp-vad,    cores: [1],              priority: high }
+  - { name: T2-asr,        cores: [2, 3, 4, 5],     priority: high }   # blueprint: 4 ASR worker cores
+  - { name: T3-emotion,    cores: [6],              priority: high }
+  - { name: T4-understand, cores: [7, 8, 9, 10],    priority: high }
+  - { name: T5-tts,        cores: [11, 12],         priority: high }
+  - { name: T6-playback,   cores: [13],             priority: realtime }
 
 stages:
   - name: frontend
@@ -37,6 +40,7 @@ stages:
       detector: silero
       model_id: vad.silero.v6
       device: cpu
+      threads: 1              # a 32 ms window is too small to split across workers
       hangover_ms: 160
       preroll_ms: 200
 
@@ -54,6 +58,7 @@ stages:
       language: auto          # automatic language ID
       threads: 4              # blueprint: 4 worker cores
       beam: 1
+      audio_ctx: auto         # encoder window sized to the utterance, >= 10 s (0 = full 30 s)
       partial_interval_ms: 500
       min_partial_ms: 1000
 
@@ -78,12 +83,13 @@ stages:
       beam: 2
       threads: 4
       expressivity: ${config_dir}/expressivity.yaml
-      control_tokens: auto    # vanilla NLLB: tokens are shown in logs but stripped before MT
+      control_tokens: auto    # vanilla NLLB gets plain text; `on` for the P3 LoRA trained on them
 
   - name: controller
     type: controller
     thread: T4-understand
-    params: { expressivity: ${config_dir}/expressivity.yaml }
+    params:
+      expressivity: ${config_dir}/expressivity.yaml
 
   - name: tts
     type: tts
@@ -92,6 +98,7 @@ stages:
     params:
       engine: piper
       model_id: tts.piper.hi_IN.pratham.medium
+      threads: 2
       chunk_ms: 100
 
   - name: playback

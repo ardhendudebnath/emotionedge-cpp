@@ -83,6 +83,11 @@ for the real engines.
 | T6 | playback | `playback`, `recorder` |
 | T7 | telemetry flush | built into the scheduler (`telemetry.flush_ms`) |
 
+A thread pins to a core set (`cores: [2, 3, 4, 5]`, or `core: N`). Worker threads that an engine
+starts from it inherit the set: whisper.cpp starts its ggml workers on every decode. So the set
+must cover the stage's `threads`, and `validate()` rejects a config where it does not. With four
+spinning whisper workers pinned to one core, the real-time pipeline stalled.
+
 ## Latency budget (p.2)
 
 `ee_bench` measures every row from per-utterance milestones (`telemetry/telemetry.cpp`). The

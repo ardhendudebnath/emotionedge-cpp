@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "core/asr/asr_engine.hpp"
 #include "core/runtime/log.hpp"
@@ -20,16 +21,49 @@ void forward_whisper_log(ggml_log_level level, const char* text, void* /*user_da
     }
 }
 
+// Whisper's encoder always sees a 30 s window (1500 positions, 50 per second). Utterances are a
+// few seconds long, so `audio_ctx: auto` encodes a shorter window: the audio plus a margin in
+// 128-position steps, never below kMinAutoCtx. Much shorter windows are fragile. On jfk.wav,
+// 256 lost a 0.7 s "Ask not" and 384 hallucinated "[MUSIC]" into a fallback loop, while 512
+// matched the full window at ~3x less compute. `audio_ctx: 0` keeps the full window.
+constexpr int kFullAudioCtx = 1500;
+constexpr int kMinAutoCtx = 512;
+constexpr int kCtxPerSecond = 50;
+
+int auto_audio_ctx(std::size_t samples) {
+    const int needed = static_cast<int>((samples * kCtxPerSecond + WHISPER_SAMPLE_RATE - 1) / WHISPER_SAMPLE_RATE);
+    const int padded = (needed + 64 + 127) / 128 * 128;  // >= 1.3 s of margin
+    return std::clamp(padded, kMinAutoCtx, kFullAudioCtx);
+}
+
 class WhisperEngine final : public IAsrEngine {
 public:
     WhisperEngine(const std::string& model_path, const Params& params)
         : threads_(static_cast<int>(params.integer("threads", 4))),
           beam_(static_cast<int>(params.integer("beam", 1))) {
+        const std::string ctx = params.str("audio_ctx", "auto");
+        if (ctx != "auto") {
+            audio_ctx_ = static_cast<int>(params.integer("audio_ctx", 0));
+            if (audio_ctx_ < 0 || audio_ctx_ > kFullAudioCtx) {
+                throw ConfigError("asr: audio_ctx must be auto or 0.." + std::to_string(kFullAudioCtx));
+            }
+        }
         whisper_log_set(forward_whisper_log, nullptr);
         whisper_context_params cparams = whisper_context_default_params();
         cparams.use_gpu = params.flag("gpu", true);
         ctx_ = whisper_init_from_file_with_params(model_path.c_str(), cparams);
         if (ctx_ == nullptr) throw ConfigError("cannot load whisper model '" + model_path + "'");
+        if (params.flag("warmup", true)) {
+            // One throwaway decode at load: the first utterance should not pay for first-touch
+            // allocations and thread start-up.
+            const std::vector<float> silence(WHISPER_SAMPLE_RATE, 0.0f);
+            AsrRequest warm;
+            warm.audio = silence;
+            warm.final = true;
+            warm.language = "en";
+            warm.utterance_start_s = -1.0;
+            (void)transcribe(warm);
+        }
     }
     ~WhisperEngine() override { whisper_free(ctx_); }
     WhisperEngine(const WhisperEngine&) = delete;
@@ -49,7 +83,21 @@ public:
         wp.single_segment = false;
         wp.token_timestamps = true;  // word-level timestamps for emphasis alignment (3.1)
         wp.suppress_blank = true;
-        language_ = r.language.empty() ? std::string("auto") : std::string(r.language);
+        wp.suppress_nst = true;  // no "[MUSIC]" / "(laughs)" annotations in the transcript
+        // A partial cut mid-word often decodes with low confidence, and temperature fallback would
+        // then re-decode it up to five times while the endpoint waits. Only finals get fallback.
+        if (!r.final) wp.temperature_inc = 0.0f;
+        wp.audio_ctx = audio_ctx_ < 0 ? auto_audio_ctx(r.audio.size()) : audio_ctx_;
+
+        // Automatic language ID costs a second encoder pass, so it runs on the first decode of an
+        // utterance only; the partials and the final that follow reuse the detected language.
+        const bool detect = r.language.empty() || r.language == "auto";
+        if (r.utterance_start_s != utterance_start_s_) {
+            utterance_start_s_ = r.utterance_start_s;
+            utterance_language_.clear();
+        }
+        language_ = !detect ? std::string(r.language)
+                            : (utterance_language_.empty() ? std::string("auto") : utterance_language_);
         wp.language = language_.c_str();  // "auto" = automatic language ID
         wp.detect_language = false;       // true would detect and stop without transcribing
 
@@ -59,6 +107,7 @@ public:
         AsrResult out;
         const int lang = whisper_full_lang_id(ctx_);
         out.language = lang >= 0 ? whisper_lang_str(lang) : language_;
+        if (detect) utterance_language_ = out.language;
         const whisper_token eot = whisper_token_eot(ctx_);
         for (int s = 0; s < whisper_full_n_segments(ctx_); ++s) {
             for (int t = 0; t < whisper_full_n_tokens(ctx_, s); ++t) {
@@ -86,7 +135,10 @@ private:
     whisper_context* ctx_ = nullptr;
     int threads_;
     int beam_;
+    int audio_ctx_ = -1;  ///< -1 = auto
     std::string language_;
+    double utterance_start_s_ = -1.0;
+    std::string utterance_language_;  ///< language detected for the current utterance
 };
 
 }  // namespace

@@ -62,8 +62,17 @@ def main() -> int:
     parser.add_argument("--only", nargs="*", default=[], help="model ids to fetch")
     parser.add_argument("--pair", help="fetch the models of a language pack, e.g. en-hi")
     parser.add_argument("--pin", action="store_true", help="write hashes of unpinned models into the manifest")
+    parser.add_argument("--dest", type=Path, help="store models in this directory instead (a copy of the "
+                        "manifest goes there too; run with --set pipeline.models=DEST/manifest.json)")
     args = parser.parse_args()
 
+    global HERE, MANIFEST
+    if args.dest:
+        args.dest.mkdir(parents=True, exist_ok=True)
+        if not (args.dest / "manifest.json").exists():
+            shutil.copy(MANIFEST, args.dest / "manifest.json")
+        HERE = args.dest.resolve()
+        MANIFEST = HERE / "manifest.json"
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     wanted = set(args.only)
     if args.pair:

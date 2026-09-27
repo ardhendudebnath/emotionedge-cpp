@@ -461,8 +461,8 @@ struct Graph::Impl {
     void thread_main(std::size_t thread_index) {
         const ThreadSpec& ts = spec.threads[thread_index];
         set_current_thread_name(ts.name);
-        if (ts.core >= 0 && !pin_current_thread(ts.core)) {
-            log::debug("thread ", ts.name, ": could not pin to core ", ts.core);
+        if (!ts.cores.empty() && !pin_current_thread(ts.cores)) {
+            log::debug("thread ", ts.name, ": could not pin to its ", ts.cores.size(), " core(s)");
         }
         if (ts.priority != ThreadPriority::Normal && !set_current_thread_priority(ts.priority)) {
             log::debug("thread ", ts.name, ": priority request not granted");

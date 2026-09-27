@@ -17,7 +17,10 @@ enum class ThreadPriority { Low, Normal, High, Realtime };
 /// One scheduler thread (blueprint p.2 threading model: T1 DSP+VAD, T2 ASR, ...).
 struct ThreadSpec {
     std::string name;
-    int core = -1;  ///< CPU to pin to, -1 = any
+    /// CPUs to pin to; empty = any. Worker threads that an engine starts from this thread inherit
+    /// the set (whisper.cpp starts its workers on every decode), so it must cover the stage's
+    /// `threads`; validate() enforces that.
+    std::vector<int> cores;
     ThreadPriority priority = ThreadPriority::Normal;
 };
 

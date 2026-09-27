@@ -9,6 +9,8 @@ emotionedge demo --target es --realtime
 emotionedge run --input speech.wav --script words.json   # stand-in ASR fed by a word script
 emotionedge run --input speech.wav --config config/pipeline.engines.yaml   # real engines
 emotionedge live                      # microphone -> speaker (build with -DEE_WITH_MINIAUDIO=ON)
+emotionedge say --engine piper --model-id tts.piper.en_US.lessac.medium --text "One. | Two." --out speech.wav
+                                      # test input for real ASR: '|' separates utterances (--gap seconds)
 emotionedge models verify             # SHA-256 check of models/manifest.json
 emotionedge stages                    # registered stage types
 ```
