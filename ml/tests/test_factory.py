@@ -150,5 +150,26 @@ class ControlPrefixTest(unittest.TestCase):
         self.assertEqual(finetune_nllb_lora.control_prefix("neutral", -0.04, "formal"), "<emo=neutral a=0.0 reg=formal>")
 
 
+class MtCorpusTest(unittest.TestCase):
+    def test_cleaning_filters_and_label_coverage(self):
+        from data import build_mt_corpus as corpus
+
+        self.assertEqual(corpus.clean("It\x92s  fine… “ok”"), "It's fine... \"ok\"")
+        self.assertFalse(corpus.usable("[NAME] is great", 1, 30))
+        self.assertFalse(corpus.usable("see https://x.y now", 1, 30))
+        self.assertFalse(corpus.usable("too short", 3, 30))
+        self.assertTrue(corpus.usable("This is great fun", 3, 30))
+        # Every GoEmotions label reaches a blueprint label through the Ekman grouping.
+        for label in corpus.GOEMOTIONS:
+            self.assertIn(es.DATASET_LABELS[corpus.TO_EKMAN[label]], es.PROTOTYPES)
+
+    def test_leak_detector(self):
+        import eval_mt
+
+        self.assertTrue(eval_mt.leaks("<emo=anger a=0.8 reg=casual> मुझे यकीन नहीं"))
+        self.assertTrue(eval_mt.leaks("emo=joy मैं खुश हूँ"))
+        self.assertFalse(eval_mt.leaks("मुझे बहुत खेद है।"))
+
+
 if __name__ == "__main__":
     unittest.main()

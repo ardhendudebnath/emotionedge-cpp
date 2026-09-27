@@ -28,6 +28,11 @@ struct ControlTokens {
 /// Removes a leading `<emo=...>` prefix (and the space after it), if present.
 [[nodiscard]] std::string_view strip_control_prefix(std::string_view text) noexcept;
 
+/// Removes every `<emo=...>` span from MT output. A model can echo the prefix; vanilla NLLB does,
+/// and a wait-k draft then carries the echo into the final. Control tokens must never be spoken
+/// or captioned.
+[[nodiscard]] std::string remove_control_tokens(std::string_view text);
+
 /// Joins words, wrapping the emphasized ones: `I can't <em>believe</em> you did this!`.
 [[nodiscard]] std::string apply_emphasis_markup(const std::vector<std::string>& words,
                                                 const std::vector<std::uint16_t>& emphasis,
