@@ -42,7 +42,7 @@ for the real engines.
 | Box | Code | Status |
 |---|---|---|
 | 3.1 Context & emotion state: join text + emotion, hysteresis, emphasis = energy peaks on word timestamps | `emotion/state_tracker.cpp`, `emotion/fusion.cpp` | **done** |
-| 3.2 Emotion-aware translation: NLLB-200 INT8 on CTranslate2, `<emo=… a=… reg=…>` control tokens, wait-k drafts, final re-translation keeping the prefix, emphasis → target words, glossary, neutral fallback below τ | `translate/*` | **done**; phrasebook **stand-in**; CTranslate2 + SentencePiece **adapter** (`EE_WITH_CTRANSLATE2`) |
+| 3.2 Emotion-aware translation: NLLB-200 INT8 on CTranslate2, `<emo=… a=… reg=…>` control tokens, wait-k drafts, final re-translation keeping the prefix, emphasis → target words, glossary, neutral fallback below τ | `translate/*` | **done**; phrasebook **stand-in**; CTranslate2 + SentencePiece **adapter** (`EE_WITH_CTRANSLATE2`); phase-2 NLLB-600M LoRA trained on the control prefix (`ml/train/finetune_nllb_lora.py`). MT output is stripped of any echoed `<emo=…>` span before TTS and captions |
 | 3.3 Expressivity profiles per language | `prosody/expressivity.cpp`, `config/expressivity.yaml` | **done** (values are placeholders to calibrate) |
 
 ### 04 · Express

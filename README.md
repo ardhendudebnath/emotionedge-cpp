@@ -118,7 +118,12 @@ The prosody rules had called it anger.
   adds nothing to end-to-end latency.
 - Peak RAM is 1.7 GB: one emotion2vec+ session is shared by the emotion engine and the
   consistency check.
-- Offline end to end p95 is 756–991 ms.
+
+Phase 2 also adds an emotion-token LoRA for NLLB, which translates `<emo=… a=… reg=…> text`.
+- It scores FLORES chrF 56.7 against 55.8 for plain NLLB-600M, and uses the casual Hindi
+  register the expressivity profile asks for.
+- Its final pass is faster: 207–252 ms p50.
+- End to end, offline p95 is 762–827 ms and real-time p50 is 696–860 ms.
 
 | CMake option | Adds | Needs |
 |---|---|---|
@@ -171,9 +176,9 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
 
 1. **Baseline pipe** (done). Capture → VAD → whisper.cpp → NLLB → Piper, with telemetry from
    day one.
-2. **Emotion in** (in progress). emotion2vec+ and the DistilRoBERTa lexical model replace the
-   stand-ins in `config/pipeline.engines.yaml`; see `ml/README.md` for their scores. Still to come:
-   the NLLB LoRA with emotion tokens.
+2. **Emotion in** (done). emotion2vec+ and the DistilRoBERTa lexical model replace the stand-ins,
+   plus an NLLB-600M LoRA that reads the emotion control prefix. All are the defaults in
+   `config/pipeline.engines.yaml`; `ml/README.md` has their scores.
 3. **Emotion out.** StyleTTS2 with style vectors and the ECAPA-TDNN voice print.
 4. **Closed loop & speed.** ECS-trained controller, wait-k streaming MT, INT8 everywhere, GPU
    execution providers.

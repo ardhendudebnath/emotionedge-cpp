@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import random
 import time
 from pathlib import Path
@@ -45,7 +44,8 @@ def main() -> int:
     parser.add_argument("--src", default="en")
     parser.add_argument("--tgt", default="hi")
     parser.add_argument("--epochs", type=int, default=2)
-    parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--batch", type=int, default=32, help="max sentences per batch")
+    parser.add_argument("--max-tokens", type=int, default=1536, help="max target tokens per batch (padded)")
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--rank", type=int, default=16)
     parser.add_argument("--seed", type=int, default=17)
@@ -68,9 +68,29 @@ def main() -> int:
     model.print_trainable_parameters()
     model.to(device)
 
+    def target_tokens(data):
+        return [len(ids) for ids in tokenizer(text_target=[r["tgt"] for r in data], truncation=True,
+                                              max_length=192)["input_ids"]]
+
+    def chunks_for(data):
+        # Length-bucketed batches under a target-token budget: the logits over NLLB's 256k
+        # vocabulary take tokens x 256k floats, so one batch of long sentences can exhaust the GPU.
+        lengths = target_tokens(data)
+        order = sorted(range(len(data)), key=lambda i: lengths[i])
+        chunks, current = [], []
+        for i in order:
+            if current and (len(current) >= args.batch or (len(current) + 1) * lengths[i] > args.max_tokens):
+                chunks.append(current)
+                current = []
+            current.append(i)
+        return chunks + ([current] if current else [])
+
+    chunk_cache = {}
+
     def batches(data, shuffle):
-        order = sorted(range(len(data)), key=lambda i: len(data[i]["src"]))  # length-bucketed
-        chunks = [order[i:i + args.batch] for i in range(0, len(order), args.batch)]
+        if id(data) not in chunk_cache:
+            chunk_cache[id(data)] = chunks_for(data)
+        chunks = list(chunk_cache[id(data)])
         if shuffle:
             random.shuffle(chunks)
         for chunk in chunks:
@@ -90,7 +110,8 @@ def main() -> int:
         model.train()
         return total / max(1, n)
 
-    steps = args.epochs * math.ceil(len(train) / args.batch)
+    chunk_cache[id(train)] = chunks_for(train)
+    steps = args.epochs * len(chunk_cache[id(train)])
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=0.01)
     sched = get_linear_schedule_with_warmup(opt, int(0.05 * steps), steps)
     best = validation_loss()

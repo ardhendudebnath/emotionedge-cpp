@@ -26,7 +26,8 @@ device (blueprint: "Python exists only in the offline factory").
   `waveform`; outputs `vad` [1, 3] and `confidence` [1, 3].
 - **MT control tokens** (`train/finetune_nllb_lora.py`). The training source carries the same text
   prefix the runtime emits, e.g. `<emo=anger a=0.8 reg=casual>`. Run the fine-tuned model with
-  `--set translate.control_tokens=on --set translate.arousal_step=0.1`.
+  `--set translate.control_tokens=on --set translate.arousal_step=0.1`; this is the default in
+  `config/pipeline.engines.yaml`.
 - **Model registry.** `export/write_manifest.py` records size and SHA-256 in
   `models/manifest.json`, which `core/runtime/model_registry.cpp` verifies before loading.
 
@@ -68,6 +69,44 @@ Caveats:
 - emotion2vec+ has no "calm" class, so RAVDESS calm lands on neutral.
 - RAVDESS may be in emotion2vec+'s pseudo-labelling seed data, so its UAR may be optimistic.
 - DistilRoBERTa was trained on MELD's training split, not its test split.
+
+## NLLB emotion-token LoRA (P2)
+
+```bash
+python ml/data/build_mt_corpus.py --meld meld_train_sent_emo.csv meld_dev_sent_emo.csv \
+    --goemotions goemotions_simplified_train.parquet --out data/mt_corpus.jsonl    # 38,647 items
+python ml/data/teacher_translate.py --corpus data/mt_corpus.jsonl --out data/mt_corpus.hi.jsonl
+python ml/train/finetune_nllb_lora.py --data data/mt_corpus.hi.jsonl --out runs/nllb-emo-lora
+ml/export/convert_nllb_ct2.sh runs/nllb-emo-lora/merged models/mt/nllb-200-distilled-600M-emo-int8 \
+    mt.nllb200.distilled600m.emo.int8
+python ml/eval/eval_mt.py --model models/mt/nllb-200-distilled-600M-emo-int8 --name emo --prefix runtime \
+    --flores flores200_dataset --corpus data/mt_corpus.hi.jsonl --backtranslate models/mt/nllb-200-distilled-600M-int8
+```
+
+The corpus:
+- **Sources:** English utterances from MELD train/dev (TV dialogue) and single-label GoEmotions.
+- **Prefixes:** the exact runtime prefix, including the neutral fallback.
+- **Targets:** Hindi from NLLB-1.3B, which reads plain English and so never sees the emotion.
+
+Training is LoRA r=16 on attention and FFN (1.4% of weights): 2 epochs in 29 minutes on an RTX
+5070 Ti laptop GPU, with validation loss going from 1.14 to 0.34. Results for NLLB-600M INT8, fed
+the way the C++ adapter feeds it:
+
+| | FLORES-200 devtest chrF / BLEU (human refs) | in-domain chrF (teacher refs) | prefix leaks | emotion round trip: agreement / text ECS |
+|---|---|---|---|---|
+| vanilla, plain text | 55.8 / 30.1 | 68.5 | 0 | 71.5% / 0.934 |
+| **emotion LoRA, runtime prefix** | **56.7 / 31.4** | **74.2** | **0** | 72.7% / 0.940 |
+| emotion LoRA, no prefix | 56.4 / 31.3 | – | 0 | – |
+
+What the numbers show:
+- **General quality:** it holds, and improves slightly from the 1.3B teacher.
+- **Conversational fillers:** "Mmm." no longer becomes "मम्मी" ("mommy"), and "Hm-mmm" is
+  now translated.
+- **Prefix:** it never leaks.
+- **Emotion signal:** round-trip agreement moves by 1.2 points on 600 items, which is within
+  noise. The teacher never saw the emotion, so the tokens can carry little signal yet.
+- **What would carry it:** emotionally faithful references, from human or LLM rewrites per
+  emotion, as a phase-4 dataset.
 
 ## Setup
 

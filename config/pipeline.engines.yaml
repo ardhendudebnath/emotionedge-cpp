@@ -91,13 +91,17 @@ stages:
     thread: T4-understand
     params:
       engine: ct2
-      model_id: mt.nllb200.distilled600m.int8
+      # Phase 2: NLLB-600M + a LoRA trained on the runtime's `<emo=... a=... reg=...>` prefix
+      # (ml/train/finetune_nllb_lora.py). Plain NLLB: model_id mt.nllb200.distilled600m.int8
+      # with control_tokens: auto, which gives it plain text.
+      model_id: mt.nllb200.distilled600m.emo.int8
+      control_tokens: on
+      arousal_step: 0.1       # the prefix format the LoRA was trained on
       device: cpu
       compute_type: int8
       beam: 2
       threads: 4
       expressivity: ${config_dir}/expressivity.yaml
-      control_tokens: auto    # vanilla NLLB gets plain text; `on` for the P3 LoRA trained on them
 
   - name: controller
     type: controller

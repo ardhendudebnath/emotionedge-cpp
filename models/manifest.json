@@ -42,6 +42,19 @@
       "source": "convert:ml/export/convert_nllb_ct2.sh"
     },
     {
+      "id": "mt.nllb200.distilled600m.emo.int8",
+      "task": "mt",
+      "format": "ct2",
+      "path": "mt/nllb-200-distilled-600M-emo-int8",
+      "check_file": "model.bin",
+      "sha256": "",
+      "languages": ["en", "hi"],
+      "devices": ["cpu", "cuda"],
+      "precision": "int8",
+      "license": "CC-BY-NC-4.0 (non-commercial)",
+      "source": "convert:ml/train/finetune_nllb_lora.py + ml/export/convert_nllb_ct2.sh"
+    },
+    {
       "id": "tts.piper.hi_IN.pratham.medium",
       "task": "tts",
       "format": "piper",
@@ -108,7 +121,7 @@
     "en-hi": {
       "vad": "vad.silero.v6",
       "asr": "asr.whisper.base.q5_1",
-      "mt": "mt.nllb200.distilled600m.int8",
+      "mt": "mt.nllb200.distilled600m.emo.int8",
       "tts": "tts.piper.hi_IN.pratham.medium",
       "emotion.acoustic": "emotion.acoustic.emotion2vec_plus_base",
       "emotion.lexical": "emotion.lexical.distilroberta_en"
