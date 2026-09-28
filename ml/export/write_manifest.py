@@ -89,7 +89,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     add = sub.add_parser("add", help="register or replace a model")
     add.add_argument("--id", required=True)
     add.add_argument("--task", required=True, choices=["vad", "asr", "emotion.acoustic", "emotion.lexical", "speaker", "mt", "tts"])
-    add.add_argument("--format", required=True, choices=["onnx", "ggml", "ct2", "piper"])
+    add.add_argument("--format", required=True, choices=["onnx", "ggml", "ct2", "piper", "kokoro"])
     add.add_argument("--path", required=True, help="relative to the manifest directory")
     add.add_argument("--check-file", help="file inside a directory model to hash (CTranslate2: model.bin)")
     add.add_argument("--languages", nargs="*")

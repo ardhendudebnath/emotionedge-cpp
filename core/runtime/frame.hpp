@@ -80,6 +80,7 @@ struct Frame {
     ProsodyTargets prosody;                ///< Speech, SynthAudio: controller plan
     StyleVector style{};                   ///< Speech: style vector for the TTS
     SpeakerEmbedding voice{};              ///< VoicePrint: speaker embedding
+    float voice_f0 = 0.0f;                 ///< VoicePrint: speaker's median F0 in Hz (0 = unknown)
     float score = 0.0f;                    ///< Feedback: emotion consistency score
     Vad delta;                             ///< Feedback: VAD_out - VAD_src
     Vad axis_confidence;                   ///< Emotion, Feedback: per-axis confidence of `emotion`

@@ -68,6 +68,10 @@ void SegmenterStage::open(StageContext& ctx) {
     cfg.preroll_ms = static_cast<int>(p.integer("preroll_ms", cfg.preroll_ms));
     cfg.max_utterance_s = p.real("max_utterance_s", cfg.max_utterance_s);
     if (cfg.threshold_off > cfg.threshold_on) throw ConfigError("segmenter: threshold_off must not exceed threshold_on");
+    // Barge-in cancels the translation still playing when speech starts. That suits a listener
+    // talking over the playback. For one speaker who keeps talking (interpreting a monologue), it
+    // drops translations, so it can be turned off; the translations then queue.
+    barge_in_ = p.flag("barge_in", true);
     tracker_ = std::make_unique<EndpointTracker>(cfg, static_cast<double>(window_) / rate_);
     preroll_windows_ = std::max<std::size_t>(
         1, static_cast<std::size_t>(cfg.preroll_ms) * static_cast<std::size_t>(rate_) / 1000 / window_);
@@ -130,7 +134,7 @@ void SegmenterStage::handle_window(float probability) {
         ctx_->services().telemetry->begin_utterance(utterance_);
         utterance_start_pos_ = preroll_.empty() ? current_.pos : preroll_.front().pos;
         speech_end_pos_ = current_.pos + static_cast<std::int64_t>(window_);
-        if (AudioIo* io = ctx_->services().audio; io != nullptr && io->playback_active.load()) {
+        if (AudioIo* io = ctx_->services().audio; barge_in_ && io != nullptr && io->playback_active.load()) {
             Frame& barge = ctx_->make(FrameKind::Control);
             barge.flags = frame_flags::kBargeIn;
             barge.utterance = utterance_;

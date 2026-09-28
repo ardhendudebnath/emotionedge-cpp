@@ -83,6 +83,32 @@
       "sidecars": ["https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"]
     },
     {
+      "id": "speaker.ecapa.voxceleb",
+      "task": "speaker",
+      "format": "onnx",
+      "path": "speaker/ecapa-voxceleb",
+      "check_file": "model.onnx",
+      "sha256": "",
+      "languages": ["*"],
+      "devices": ["cpu", "cuda"],
+      "precision": "fp32",
+      "license": "Apache-2.0 (speechbrain/spkrec-ecapa-voxceleb)",
+      "source": "convert:ml/export/export_ecapa_onnx.py"
+    },
+    {
+      "id": "tts.kokoro.82m.hi",
+      "task": "tts",
+      "format": "kokoro",
+      "path": "tts/kokoro-82m-hi",
+      "check_file": "model.onnx",
+      "sha256": "",
+      "languages": ["hi"],
+      "devices": ["cpu", "cuda"],
+      "precision": "fp32",
+      "license": "Apache-2.0 (hexgrad/Kokoro-82M)",
+      "source": "convert:ml/export/export_kokoro_onnx.py"
+    },
+    {
       "id": "emotion.acoustic.emotion2vec_plus_base",
       "task": "emotion.acoustic",
       "format": "onnx",
@@ -122,7 +148,8 @@
       "vad": "vad.silero.v6",
       "asr": "asr.whisper.base.q5_1",
       "mt": "mt.nllb200.distilled600m.emo.int8",
-      "tts": "tts.piper.hi_IN.pratham.medium",
+      "tts": "tts.kokoro.82m.hi",
+      "speaker": "speaker.ecapa.voxceleb",
       "emotion.acoustic": "emotion.acoustic.emotion2vec_plus_base",
       "emotion.lexical": "emotion.lexical.distilroberta_en"
     },

@@ -5,6 +5,7 @@
 #include "core/audio/dsp.hpp"
 #include "core/audio/pitch.hpp"
 #include "core/audio/resampler.hpp"
+#include "core/audio/speaker.hpp"
 #include "core/tts/clause_chunker.hpp"
 #include "core/tts/formant_synth.hpp"
 #include "core/tts/tts_stage.hpp"
@@ -21,6 +22,19 @@ TEST(ClauseChunker, SplitsAtClausePunctuationKeepingAShortFirstClause) {
     EXPECT_EQ(clauses[0].emphasis, (std::vector<std::uint16_t>{1}));
     EXPECT_EQ(clauses[1].first_word, 6u);
     EXPECT_EQ(clauses[1].emphasis, (std::vector<std::uint16_t>{6}));  // "sofa." is word 12 overall
+}
+
+// A capped first clause: first audio after a few words, the rest kept whole, emphasis remapped.
+TEST(ClauseChunker, CapsTheFirstClauseForSlowTts) {
+    ChunkerConfig cfg;
+    cfg.max_first_words = 3;
+    const auto clauses = chunk_clauses("I really cannot believe you did this to me", "en", {4}, cfg);
+    ASSERT_EQ(clauses.size(), 2u);
+    EXPECT_EQ(clauses[0].text, "I really cannot");
+    EXPECT_EQ(clauses[1].text, "believe you did this to me");
+    EXPECT_EQ(clauses[1].emphasis, (std::vector<std::uint16_t>{1}));  // "you"
+    // Never leaves fewer than two words behind.
+    EXPECT_EQ(chunk_clauses("one two three four", "en", {}, cfg).size(), 1u);
 }
 
 TEST(ClauseChunker, HandlesDevanagariAndRunOnText) {
@@ -113,10 +127,11 @@ TEST(FormantSynth, EmphasisAddsAPrePauseAndLoudness) {
 TEST(FormantSynth, KeepsTheSpeakersPitchFromTheVoicePrint) {
     FormantSynth synth;
     SpeakerEmbedding print{};
-    print[0] = 0.120f;  // 120 Hz speaker
+    print[0] = 0.120f;  // 120 Hz speaker (pitch-encoder layout)
     SynthesisRequest req;
     req.text = "hello there my friend";
     req.voice = &print;
+    req.voice_f0 = voice_print_f0(print);  // what the speaker stage sends with every print
     SynthesisResult out;
     synth.synthesize(req, out);
     const auto at16k = Resampler::convert(out.audio, out.sample_rate, 16000);
