@@ -30,8 +30,14 @@ public:
 /// Median F0 (Hz) stored by PitchSpeakerEncoder, or 0 if the print carries none.
 [[nodiscard]] float voice_print_f0(const SpeakerEmbedding& print) noexcept;
 
-/// `encoder: pitch` (default). `ecapa` arrives with the phase-3 model export.
+/// `encoder: pitch` (default) or `ecapa` (ECAPA-TDNN through ONNX Runtime, `model`/`model_id`
+/// from ml/export/export_ecapa_onnx.py; an L2-normalized 192-d print).
 [[nodiscard]] std::unique_ptr<ISpeakerEncoder> make_speaker_encoder(const Params& params, const ModelRegistry* registry);
+
+#if defined(EE_HAVE_ONNXRUNTIME)
+[[nodiscard]] std::unique_ptr<ISpeakerEncoder> make_ecapa_encoder(const std::string& path, const Params& params,
+                                                                  const ModelRegistry* registry);
+#endif
 
 /// Stage 1.4: embeds each utterance's first seconds of speech and emits a VoicePrint frame at
 /// the endpoint, which the TTS (4.2) uses to keep the speaker's voice.
@@ -43,6 +49,7 @@ public:
 private:
     StageContext* ctx_ = nullptr;
     std::unique_ptr<ISpeakerEncoder> encoder_;
+    bool pitch_encoder_ = true;  ///< the print itself carries F0 (PitchSpeakerEncoder layout)
     std::vector<float> audio_;
     std::uint64_t utterance_ = 0;
     std::size_t max_samples_ = 0;

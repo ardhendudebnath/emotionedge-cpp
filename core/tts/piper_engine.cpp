@@ -4,7 +4,6 @@
 // A voice is `<name>.onnx` plus `<name>.onnx.json` (sample rate, espeak voice, phoneme_id_map,
 // inference scales). Piper voices take rate as length_scale; energy and emphasis pre-pauses are
 // applied around the model. Pitch mean/range and the style vector need StyleTTS2 (phase 3).
-#include <espeak-ng/speak_lib.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -12,23 +11,18 @@
 #include <cmath>
 #include <fstream>
 #include <map>
-#include <mutex>
 #include <string>
 #include <vector>
 
 #include "core/audio/dsp.hpp"
 #include "core/runtime/onnx.hpp"
 #include "core/translate/languages.hpp"
+#include "core/tts/espeak.hpp"
 #include "core/tts/tts_engine.hpp"
 
 namespace ee {
 
 namespace {
-
-std::mutex& espeak_mutex() {
-    static std::mutex m;  // espeak-ng keeps global state
-    return m;
-}
 
 std::vector<char32_t> codepoints(std::string_view s) {
     std::vector<char32_t> out;
@@ -87,11 +81,7 @@ public:
             ids_[phoneme] = ids.get<std::vector<std::int64_t>>();
         }
 
-        std::lock_guard lock(espeak_mutex());
-        const std::string data = params.str("espeak_data");
-        if (espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, data.empty() ? nullptr : data.c_str(), 0) < 0) {
-            throw ConfigError("cannot initialize espeak-ng (set espeak_data to its data directory)");
-        }
+        espeak::initialize(params.str("espeak_data"));
     }
 
     int sample_rate() const noexcept override { return sample_rate_; }
@@ -126,18 +116,7 @@ public:
 
 private:
     std::vector<std::int64_t> phoneme_ids(const std::string& text) {
-        std::string phonemes;
-        {
-            std::lock_guard lock(espeak_mutex());
-            espeak_SetVoiceByName(voice_.c_str());
-            const void* cursor = text.c_str();
-            while (cursor != nullptr) {
-                const char* clause = espeak_TextToPhonemes(&cursor, espeakCHARS_UTF8, espeakPHONEMES_IPA);
-                if (clause == nullptr) break;
-                if (!phonemes.empty()) phonemes += ' ';
-                phonemes += clause;
-            }
-        }
+        std::string phonemes = espeak::text_to_phonemes(text, voice_, false);
         // Clause terminators are lost by espeak_TextToPhonemes; restore the sentence's final mark.
         const char last = text.empty() ? '.' : text.back();
         phonemes += (last == '?' || last == '!' || last == ',') ? last : '.';

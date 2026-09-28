@@ -11,6 +11,9 @@ struct ChunkerConfig {
     std::size_t min_first_chars = 8;  ///< the first clause may be short: first audio ASAP
     std::size_t min_chars = 24;       ///< later clauses are merged up to at least this
     std::size_t max_chars = 140;      ///< long runs without punctuation are split at a word
+    /// Cap on the first clause's words (0 = none). For a TTS whose cost grows with the clause
+    /// (Kokoro), the first clause's length sets the time to first audio.
+    std::size_t max_first_words = 0;
 };
 
 struct Clause {

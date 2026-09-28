@@ -11,6 +11,10 @@ pipeline:
   target_language: hi
   sample_rate: 16000
   models: ${config_dir}/../models/manifest.json
+  # Phase 4: stages without their own `device` run on CUDA when the build has it (ONNX Runtime's
+  # GPU package, CTranslate2 built with CUDA) and a GPU is present, else on the CPU. Force one
+  # with --set pipeline.device=cpu (or cuda, which warns when it has to fall back).
+  device: auto
 
 telemetry:
   flush_ms: 1000
@@ -21,9 +25,9 @@ telemetry:
 threads:
   - { name: T1-dsp-vad,    cores: [1],              priority: high }
   - { name: T2-asr,        cores: [2, 3, 4, 5],     priority: high }   # blueprint: 4 ASR worker cores
-  - { name: T3-emotion,    cores: [6],              priority: high }
+  - { name: T3-emotion,    cores: [6, 14, 15, 16],  priority: high }   # emotion2vec+ x2, DistilRoBERTa
   - { name: T4-understand, cores: [7, 8, 9, 10],    priority: high }
-  - { name: T5-tts,        cores: [11, 12],         priority: high }
+  - { name: T5-tts,        cores: [11, 12, 17, 18, 19, 20], priority: high }   # Kokoro's vocoder
   - { name: T6-playback,   cores: [13],             priority: realtime }
 
 stages:
@@ -43,11 +47,19 @@ stages:
       threads: 1              # a 32 ms window is too small to split across workers
       hangover_ms: 160
       preroll_ms: 200
+      # One speaker being interpreted: the speaker's next phrase must not cancel the translation
+      # of the last one (barge-in is for a listener talking over the playback).
+      barge_in: false
 
   - name: speaker
     type: speaker
     thread: T3-emotion
-    params: { encoder: pitch }
+    params:
+      # Phase 3: the 192-d ECAPA-TDNN voice print (1.4). Kokoro cannot clone a voice, so the TTS
+      # picks its nearest voice by the speaker's median F0, which travels with every print.
+      encoder: ecapa
+      model_id: speaker.ecapa.voxceleb
+      threads: 2
 
   - name: asr
     type: asr
@@ -65,7 +77,22 @@ stages:
   - name: emotion
     type: emotion
     thread: T3-emotion
-    params: { acoustic: prosody, lexical: lexicon }
+    params:
+      # Phase 2 "emotion in": emotion2vec+ on the voice, DistilRoBERTa on the words. Both are
+      # classifiers mapped to V·A·D by their labels.json. The prosody rules and the lexicon are
+      # the stand-ins (acoustic: prosody, lexical: lexicon).
+      acoustic: onnx
+      acoustic_model_id: emotion.acoustic.emotion2vec_plus_base
+      acoustic_max_seconds: 6     # the utterance's last 6 s; cost grows with length
+      lexical: onnx
+      lexical_model_id: emotion.lexical.distilroberta_en
+      lexical_device: cpu         # its INT8 graph: 4 ms per sentence on the CPU, 10 ms on CUDA
+      threads: 4
+      # emotion2vec+ also reads valence from the voice, unlike the prosody rules (0.3). Text is
+      # still the stronger valence cue, but less so on arousal and dominance.
+      fusion:
+        acoustic: { valence: 0.7, arousal: 1.0, dominance: 0.8 }
+        lexical: { valence: 0.8, arousal: 0.5, dominance: 0.4 }
 
   - name: state
     type: state
@@ -77,13 +104,17 @@ stages:
     thread: T4-understand
     params:
       engine: ct2
-      model_id: mt.nllb200.distilled600m.int8
-      device: cpu
-      compute_type: int8
+      # Phase 2: NLLB-600M + a LoRA trained on the runtime's `<emo=... a=... reg=...>` prefix
+      # (ml/train/finetune_nllb_lora.py). Plain NLLB: model_id mt.nllb200.distilled600m.int8
+      # with control_tokens: auto, which gives it plain text.
+      model_id: mt.nllb200.distilled600m.emo.int8
+      control_tokens: on
+      arousal_step: 0.1       # the prefix format the LoRA was trained on
+      compute_type: int8      # on the CPU
+      gpu_compute_type: int8_float16   # on CUDA: what the phase-2 quality gate measured
       beam: 2
       threads: 4
       expressivity: ${config_dir}/expressivity.yaml
-      control_tokens: auto    # vanilla NLLB gets plain text; `on` for the P3 LoRA trained on them
 
   - name: controller
     type: controller
@@ -96,9 +127,25 @@ stages:
     thread: T5-tts
     tick_ms: 5
     params:
-      engine: piper
-      model_id: tts.piper.hi_IN.pratham.medium
-      threads: 2
+      # Phase 3: Kokoro-82M (StyleTTS2 family) with the emotion controller driving its duration,
+      # F0 and final contour, plus learned per-emotion style offsets. On CUDA a clause takes
+      # ~70-95 ms whatever its length. On the CPU its vocoder costs ~300 ms, hence the 3-word cap
+      # on the first clause and 6 cores (on the GPU the cap measured no different).
+      # Piper fallback: engine: piper, model_id: tts.piper.hi_IN.pratham.medium, threads: 2.
+      engine: kokoro
+      model_id: tts.kokoro.82m.hi
+      # Nearest of hf_alpha, hf_beta, hm_omega, hm_psi to the speaker's median F0. This fails for
+      # high-pitched men and low-pitched women (JFK's speech, at 253 Hz, gets a female voice);
+      # set voice to a fixed name for a known speaker.
+      voice: auto
+      voice_match: pitch
+      # Learned with the intelligibility term. An independent judge agrees on direction for
+      # anger, joy and sadness (arousal/dominance; valence barely moves). The fear offset only
+      # fools the training judge, and surprise makes Whisper hallucinate: both stay off.
+      style_offsets: style_offsets.json
+      style_emotions: [anger, joy, sadness]
+      max_first_words: 3
+      threads: 6              # ORT spinning measured no faster here, at +50% CPU: left off
       chunk_ms: 100
 
   - name: playback
@@ -110,7 +157,14 @@ stages:
   - name: consistency
     type: consistency
     thread: T3-emotion
-    params: { acoustic: prosody, lexical: lexicon, threshold: 0.75 }
+    params:
+      # Judges the synthesized speech with the same voice model as 2.2. The English lexical
+      # model abstains on the Hindi output, so no lexical model here.
+      acoustic: onnx
+      acoustic_model_id: emotion.acoustic.emotion2vec_plus_base
+      lexical: none
+      threads: 4
+      threshold: 0.75
 
   - name: recorder
     type: recorder

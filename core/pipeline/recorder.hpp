@@ -27,6 +27,7 @@ struct UtteranceRecord {
     ProsodyTargets prosody;
     Vad correction;               ///< closed-loop correction in effect for this utterance
     std::vector<float> ecs;       ///< one score per synthesized clause
+    std::vector<EmotionState> output_emotion;  ///< emotion measured on each synthesized clause (5.2)
     double out_start = -1.0;      ///< output timeline (seconds), -1 if never played
     double out_end = -1.0;
 

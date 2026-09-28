@@ -105,6 +105,13 @@ StageSpec* PipelineSpec::find_stage(std::string_view stage_name) {
     return nullptr;
 }
 
+void PipelineSpec::apply_device_default() {
+    if (device.empty()) return;
+    for (StageSpec& s : stages) {
+        if (!s.params.has("device")) s.params.set("device", device);
+    }
+}
+
 PipelineSpec parse_pipeline(std::string_view yaml_text, const std::filesystem::path& config_dir) {
     YAML::Node root;
     try {
@@ -123,6 +130,7 @@ PipelineSpec parse_pipeline(std::string_view yaml_text, const std::filesystem::p
         if (p["target_language"]) spec.target_language = scalar(p["target_language"], "target_language", dir);
         if (p["sample_rate"]) spec.sample_rate = scalar_as<int>(p["sample_rate"], "sample_rate");
         if (p["models"]) spec.models_manifest = scalar(p["models"], "pipeline.models", dir);
+        if (p["device"]) spec.device = scalar(p["device"], "pipeline.device", dir);
     }
 
     if (const auto t = root["telemetry"]) {
@@ -211,6 +219,7 @@ void apply_override(PipelineSpec& spec, std::string_view key, std::string_view v
         else if (rest == "target_language") spec.target_language = v;
         else if (rest == "sample_rate") spec.sample_rate = std::stoi(v);
         else if (rest == "models") spec.models_manifest = v;
+        else if (rest == "device") spec.device = v;
         else throw ConfigError("unknown pipeline setting '" + std::string(rest) + "'");
         return;
     }

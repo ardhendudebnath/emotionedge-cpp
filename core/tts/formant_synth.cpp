@@ -185,7 +185,7 @@ void FormantSynth::synthesize(const SynthesisRequest& req, SynthesisResult& out)
     const double rolloff = std::clamp(voice_.rolloff - 0.5 * p.tension - 0.05 * p.energy_db, 0.7, 2.4);
     double base_f0 = voice_.base_f0_hz;
     if (req.voice != nullptr) {
-        if (const float f0 = voice_print_f0(*req.voice); f0 > 0.0f) base_f0 = f0;
+        if (const float f0 = req.voice_f0; f0 > 0.0f) base_f0 = f0;
     }
 
     const std::vector<std::string> words = split_words(req.text, req.language);

@@ -31,8 +31,15 @@ public:
 /// normalized so "can’t" matches "can't".
 [[nodiscard]] std::vector<std::string> tokenize_for_emotion(std::string_view text);
 
-/// `lexical: lexicon` (default) or `none`.
+/// `lexical: lexicon` (default), `onnx` (a DistilRoBERTa classifier directory, `lexical_model` or
+/// `lexical_model_id`; needs -DEE_WITH_ONNXRUNTIME=ON) or `none`.
 [[nodiscard]] std::unique_ptr<ILexicalEmotionModel> make_lexical_model(const Params& params,
                                                                        const ModelRegistry* registry);
+
+#if defined(EE_HAVE_ONNXRUNTIME)
+[[nodiscard]] std::unique_ptr<ILexicalEmotionModel> make_onnx_lexical_model(const std::string& dir,
+                                                                            const Params& params,
+                                                                            const ModelRegistry* registry);
+#endif
 
 }  // namespace ee

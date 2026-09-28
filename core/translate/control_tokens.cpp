@@ -41,6 +41,31 @@ std::string_view strip_control_prefix(std::string_view text) noexcept {
     return text;
 }
 
+std::string remove_control_tokens(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const std::size_t start = text.find("<emo=", i);
+        const std::size_t end = start == std::string_view::npos ? start : text.find('>', start);
+        if (end == std::string_view::npos) {
+            out.append(text.substr(i));
+            break;
+        }
+        out.append(text.substr(i, start - i));
+        i = end + 1;
+    }
+    // Collapse the doubled or edge spaces a removed span leaves behind.
+    std::string clean;
+    clean.reserve(out.size());
+    for (char c : out) {
+        if (c == ' ' && (clean.empty() || clean.back() == ' ')) continue;
+        clean += c;
+    }
+    while (!clean.empty() && clean.back() == ' ') clean.pop_back();
+    return clean;
+}
+
 std::string apply_emphasis_markup(const std::vector<std::string>& words, const std::vector<std::uint16_t>& emphasis,
                                   std::string_view language) {
     std::vector<std::string> marked = words;

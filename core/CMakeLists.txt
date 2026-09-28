@@ -54,7 +54,7 @@ set(EE_AUDIO_SOURCES
     audio/wav.cpp)
 set(EE_AUDIO_DEPS ee::runtime)
 if(EE_WITH_ONNXRUNTIME)
-    list(APPEND EE_AUDIO_SOURCES audio/silero_detector.cpp)
+    list(APPEND EE_AUDIO_SOURCES audio/ecapa_encoder.cpp audio/silero_detector.cpp)
 endif()
 if(EE_WITH_MINIAUDIO)
     list(APPEND EE_AUDIO_SOURCES audio/device.cpp)
@@ -65,6 +65,8 @@ ee_add_module(audio SOURCES ${EE_AUDIO_SOURCES} PUBLIC_DEPS ${EE_AUDIO_DEPS})
 # ---- emotion/: acoustic, lexical, fusion, state tracker (3.1), consistency (5.2) --------------
 set(EE_EMOTION_SOURCES
     emotion/acoustic.cpp
+    emotion/bpe_tokenizer.cpp
+    emotion/class_mapping.cpp
     emotion/consistency_stage.cpp
     emotion/emotion_stage.cpp
     emotion/fusion.cpp
@@ -72,9 +74,10 @@ set(EE_EMOTION_SOURCES
     emotion/prosody_features.cpp
     emotion/state_tracker.cpp)
 if(EE_WITH_ONNXRUNTIME)
-    list(APPEND EE_EMOTION_SOURCES emotion/onnx_acoustic.cpp)
+    list(APPEND EE_EMOTION_SOURCES emotion/onnx_acoustic.cpp emotion/onnx_lexical.cpp)
 endif()
-ee_add_module(emotion SOURCES ${EE_EMOTION_SOURCES} PUBLIC_DEPS ee::audio ee::runtime)
+ee_add_module(emotion SOURCES ${EE_EMOTION_SOURCES} PUBLIC_DEPS ee::audio ee::runtime
+    PRIVATE_DEPS nlohmann_json::nlohmann_json)
 
 # ---- asr/: streaming ASR, LocalAgreement-2, whisper.cpp adapter ------------------------------
 set(EE_ASR_SOURCES
@@ -118,10 +121,12 @@ ee_add_module(translate SOURCES ${EE_TRANSLATE_SOURCES} PUBLIC_DEPS ${EE_TRANSLA
 set(EE_TTS_SOURCES
     tts/clause_chunker.cpp
     tts/formant_synth.cpp
+    tts/kokoro_g2p.cpp
+    tts/text_filter.cpp
     tts/tts_stage.cpp)
 set(EE_TTS_DEPS ee::translate ee::audio ee::prosody ee::runtime)
 if(EE_WITH_PIPER)
-    list(APPEND EE_TTS_SOURCES tts/piper_engine.cpp)
+    list(APPEND EE_TTS_SOURCES tts/espeak.cpp tts/kokoro_engine.cpp tts/piper_engine.cpp)
     list(APPEND EE_TTS_DEPS ee::piper)
 endif()
 ee_add_module(tts SOURCES ${EE_TTS_SOURCES} PUBLIC_DEPS ${EE_TTS_DEPS} PRIVATE_DEPS nlohmann_json::nlohmann_json)

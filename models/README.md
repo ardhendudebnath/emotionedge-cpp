@@ -28,6 +28,41 @@ NLLB-200 is converted rather than downloaded. `ml/export/convert_nllb_ct2.sh` tu
 `facebook/nllb-200-distilled-600M` into an INT8 CTranslate2 directory under
 `models/mt/nllb-200-distilled-600M-int8/`, including `sentencepiece.bpe.model`.
 
+The en-hi language pack uses the phase-2 emotion-token LoRA of that model,
+`mt.nllb200.distilled600m.emo.int8`. It is produced by the recipe in `ml/README.md`
+("NLLB emotion-token LoRA"). With plain NLLB instead, run:
+`--set translate.model_id=mt.nllb200.distilled600m.int8 --set translate.control_tokens=auto`.
+
+The phase-2 emotion models are exported from Hugging Face. Each export checks ONNX Runtime
+against the original model before writing anything, and keeps INT8 only where it does not
+change predictions.
+
+```bash
+python ml/export/export_emotion2vec_onnx.py --out models/emotion/emotion2vec-plus-base --check data/ravdess.jsonl
+python ml/export/export_lexical_onnx.py --out models/emotion/distilroberta-emotion-en --int8
+```
+
+- **emotion2vec+ base** stays FP32 (373 MB). INT8 flipped 2 of 64 check clips.
+- **DistilRoBERTa** is INT8 (83 MB, 1.9 ms per sentence).
+- **Licenses:** emotion2vec+ is under FunASR's model license (attribution). The DistilRoBERTa
+  model card states no license, so clear it before shipping.
+
+The phase-3 voice models are exported the same way, each checked against its original.
+
+```bash
+python ml/export/export_kokoro_onnx.py --out models/tts/kokoro-82m-hi --espeak-lib <libespeak-ng.so.1>
+python ml/export/export_ecapa_onnx.py --out models/speaker/ecapa-voxceleb --check data/ravdess.jsonl
+python ml/train/learn_style_offsets.py --corpus data/mt_corpus.hi.jsonl --voice-dir models/tts/kokoro-82m-hi \
+    --espeak-lib <libespeak-ng.so.1> --asr-weight 1.0      # optional: per-emotion style offsets (GPU)
+```
+
+- **Kokoro-82M** (Apache-2.0) is exported with prosody controls and an exact conv STFT.
+  Kokoro's own ONNX STFT is approximate, so it is replaced. With neutral controls, the output
+  matches Kokoro's forward pass.
+- **ECAPA-TDNN** (SpeechBrain, Apache-2.0) matches SpeechBrain's embeddings with cosine 1.00000.
+- **`--espeak-lib`** should point at the espeak-ng the C++ runtime uses, so the golden phonemes
+  (`tests/golden/kokoro_g2p_hi.json`) test the C++ port and not an espeak version difference.
+
 ## Use
 
 `config/pipeline.engines.yaml` refers to these ids (`model_id: asr.whisper.base.q5_1`). A stage can

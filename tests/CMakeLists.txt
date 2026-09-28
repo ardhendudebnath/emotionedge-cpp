@@ -19,6 +19,7 @@ add_executable(ee_tests
     audio/test_frontend_playback.cpp
     audio/test_ring_wav_resampler.cpp
     audio/test_segmenter.cpp
+    emotion/test_classifier_models.cpp
     emotion/test_emotion_models.cpp
     emotion/test_emotion_stages.cpp
     pipeline/test_pipeline_e2e.cpp
@@ -30,6 +31,7 @@ add_executable(ee_tests
     runtime/test_spsc_queue.cpp
     runtime/test_telemetry.cpp
     translate/test_translate.cpp
+    tts/test_kokoro_g2p.cpp
     tts/test_tts.cpp)
 
 target_include_directories(ee_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

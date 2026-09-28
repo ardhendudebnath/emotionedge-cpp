@@ -14,6 +14,7 @@ onnxsim>=0.4
 optimum[onnxruntime]>=1.21
 ctranslate2>=4.4
 huggingface_hub>=0.24
+funasr>=1.2  # emotion2vec+ export (export/export_emotion2vec_onnx.py)
 sacrebleu>=2.4
 unbabel-comet>=2.2
 jiwer>=3.0

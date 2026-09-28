@@ -35,6 +35,15 @@ TEST(ControlTokens, MatchTheBlueprintFormat) {
     EXPECT_EQ(strip_control_prefix("no tokens here"), "no tokens here");
 }
 
+// An echoed prefix (vanilla NLLB, then kept by a wait-k draft) must never reach TTS or captions.
+TEST(ControlTokens, EchoedTokensAreRemovedFromOutput) {
+    EXPECT_EQ(remove_control_tokens("<emo=surprise a=0.4 reg=casual> \xE0\xA4\xB9\xE0\xA4\xBE\xE0\xA4\x81"),
+              "\xE0\xA4\xB9\xE0\xA4\xBE\xE0\xA4\x81");
+    EXPECT_EQ(remove_control_tokens("one <emo=joy a=0.5 reg=casual> two <emo=anger a=0.8 reg=formal>"), "one two");
+    EXPECT_EQ(remove_control_tokens("no tokens, <b>tags</b> stay"), "no tokens, <b>tags</b> stay");
+    EXPECT_EQ(remove_control_tokens("unterminated <emo=joy a=0.5"), "unterminated <emo=joy a=0.5");
+}
+
 TEST(ControlTokens, EmphasisMarkupRoundTrips) {
     const std::vector<std::string> source = {"I", "can't", "believe", "you", "did", "this!"};
     const std::string marked = apply_emphasis_markup(source, {2});

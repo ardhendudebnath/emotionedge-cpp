@@ -7,19 +7,27 @@ device (blueprint: "Python exists only in the offline factory").
 |---|---|---|
 | P1 Data | IEMOCAP, MSP-Podcast, CREMA-D, ESD; augment noise/RIR/speed | `data/prepare_manifest.py` |
 | P2 Train & fine-tune | emotion2vec head → V·A·D; NLLB LoRA + emotion tokens | `train/train_vad_head.py`, `train/finetune_nllb_lora.py` |
-| P3 Compress | distillation, INT8 PTQ/QAT, pruning, ONNX simplify | `distill/quantize_onnx.py` |
-| P4 Export | torch.onnx / Optimum, CT2 converter, GGML quantize, sign + write manifest | `export/*` |
-| P5 Evaluate | WER · COMET · BLEU · emotion F1 · CCC · ECS · latency | `emotionedge_ml/metrics.py`, `eval/quality_gate.py` |
+| P3 Compress | distillation, INT8 PTQ/QAT, pruning, ONNX simplify | `distill/quantize_onnx.py`; INT8 kept only where it does not change decisions (see the exports) |
+| P4 Export | torch.onnx / Optimum, CT2 converter, GGML quantize, sign + write manifest | `export/*`: `export_emotion2vec_onnx.py`, `export_lexical_onnx.py`, `export_acoustic_onnx.py`, … |
+| P5 Evaluate | WER · COMET · BLEU · emotion F1 · CCC · ECS · latency | `emotionedge_ml/metrics.py`, `eval/eval_emotion.py`, `eval/quality_gate.py` |
 
 ## Contracts with the C++ core
 
 - **Emotion space.** `config/emotion_space.json` holds the label prototypes and the ECS formula.
   Tests in both languages check that the file matches the compiled values.
-- **Acoustic model** (`export/export_acoustic_onnx.py`). Input `waveform` [1, samples] at 16 kHz;
-  outputs `vad` [1, 3] and `confidence` [1, 3]. This is what `core/emotion/onnx_acoustic.cpp` expects.
+- **Emotion classifiers** (`export/export_emotion2vec_onnx.py`, `export/export_lexical_onnx.py`).
+  Each is a directory: `model.onnx` gives logits, and `labels.json` gives each class a V·A·D
+  position (`emotionedge_ml.emotion_space.label_map`). The runtime turns the class probabilities
+  into one V·A·D point with per-axis confidence (`core/emotion/class_mapping.cpp`). The acoustic
+  model takes `waveform` [1, samples] at 16 kHz. The lexical model takes `input_ids` and
+  `attention_mask`, plus the `tokenizer.json` that `core/emotion/bpe_tokenizer.cpp` reads.
+- **Acoustic V·A·D regressor** (`export/export_acoustic_onnx.py`, a head trained by
+  `train/train_vad_head.py` once dimensional data such as MSP-Podcast is available). Input
+  `waveform`; outputs `vad` [1, 3] and `confidence` [1, 3].
 - **MT control tokens** (`train/finetune_nllb_lora.py`). The training source carries the same text
   prefix the runtime emits, e.g. `<emo=anger a=0.8 reg=casual>`. Run the fine-tuned model with
-  `--set translate.control_tokens=on --set translate.arousal_step=0.1`.
+  `--set translate.control_tokens=on --set translate.arousal_step=0.1`; this is the default in
+  `config/pipeline.engines.yaml`.
 - **Model registry.** `export/write_manifest.py` records size and SHA-256 in
   `models/manifest.json`, which `core/runtime/model_registry.cpp` verifies before loading.
 
@@ -36,6 +44,117 @@ python ml/eval/quality_gate.py --bench out/bench/bench.json --candidate metrics.
 `eval/baseline.json` holds the current baseline. The gate fails on a regression past each metric's
 tolerance, or on a miss of the blueprint's success targets (p95 < 800 ms, RTF < 0.3, ECS ≥ 0.75,
 RAM < 3 GB, 0 dropouts).
+
+Emotion models are scored through the runtime itself (`emotionedge emotion`), so the C++
+inference path is what gets measured:
+
+```bash
+python ml/eval/eval_emotion.py prepare-ravdess --zip Audio_Speech_Actors_01-24.zip --dir data/ravdess --out data/ravdess.jsonl
+emotionedge emotion --config config/pipeline.engines.yaml --manifest data/ravdess.jsonl --out preds.jsonl
+python ml/eval/eval_emotion.py score --items data/ravdess.jsonl --preds preds.jsonl --modality acoustic --json metrics.json
+```
+
+| Model (C++ runtime) | Data | UAR | CCC V / A / D |
+|---|---|---|---|
+| prosody rules (phase-1 stand-in) | RAVDESS speech, 1440 clips | 0.18 | 0.00 / 0.43 / 0.03 |
+| **emotion2vec+ base** | RAVDESS speech, 1440 clips | **0.80** | 0.86 / 0.84 / 0.83 |
+| lexicon (phase-1 stand-in) | MELD test text, 2610 utterances | 0.21 (abstains on 53%) | 0.23 / 0.20 / 0.12 |
+| **DistilRoBERTa** (INT8) | MELD test text, 2610 utterances | **0.43** | 0.39 / 0.41 / 0.28 |
+
+How these are scored:
+- UAR is over the blueprint labels: a prediction is the label nearest the model's V·A·D point.
+- CCC compares against each gold label's prototype. That is a proxy, since both sets are categorical.
+
+Caveats:
+- emotion2vec+ has no "calm" class, so RAVDESS calm lands on neutral.
+- RAVDESS may be in emotion2vec+'s pseudo-labelling seed data, so its UAR may be optimistic.
+- DistilRoBERTa was trained on MELD's training split, not its test split.
+
+## NLLB emotion-token LoRA (P2)
+
+```bash
+python ml/data/build_mt_corpus.py --meld meld_train_sent_emo.csv meld_dev_sent_emo.csv \
+    --goemotions goemotions_simplified_train.parquet --out data/mt_corpus.jsonl    # 38,647 items
+python ml/data/teacher_translate.py --corpus data/mt_corpus.jsonl --out data/mt_corpus.hi.jsonl
+python ml/train/finetune_nllb_lora.py --data data/mt_corpus.hi.jsonl --out runs/nllb-emo-lora
+ml/export/convert_nllb_ct2.sh runs/nllb-emo-lora/merged models/mt/nllb-200-distilled-600M-emo-int8 \
+    mt.nllb200.distilled600m.emo.int8
+python ml/eval/eval_mt.py --model models/mt/nllb-200-distilled-600M-emo-int8 --name emo --prefix runtime \
+    --flores flores200_dataset --corpus data/mt_corpus.hi.jsonl --backtranslate models/mt/nllb-200-distilled-600M-int8
+```
+
+The corpus:
+- **Sources:** English utterances from MELD train/dev (TV dialogue) and single-label GoEmotions.
+- **Prefixes:** the exact runtime prefix, including the neutral fallback.
+- **Targets:** Hindi from NLLB-1.3B, which reads plain English and so never sees the emotion.
+
+Training is LoRA r=16 on attention and FFN (1.4% of weights): 2 epochs in 29 minutes on an RTX
+5070 Ti laptop GPU, with validation loss going from 1.14 to 0.34. Results for NLLB-600M INT8, fed
+the way the C++ adapter feeds it:
+
+| | FLORES-200 devtest chrF / BLEU (human refs) | in-domain chrF (teacher refs) | prefix leaks | emotion round trip: agreement / text ECS |
+|---|---|---|---|---|
+| vanilla, plain text | 55.8 / 30.1 | 68.5 | 0 | 71.5% / 0.934 |
+| **emotion LoRA, runtime prefix** | **56.7 / 31.4** | **74.2** | **0** | 72.7% / 0.940 |
+| emotion LoRA, no prefix | 56.4 / 31.3 | – | 0 | – |
+
+What the numbers show:
+- **General quality:** it holds, and improves slightly from the 1.3B teacher.
+- **Conversational fillers:** "Mmm." no longer becomes "मम्मी" ("mommy"), and "Hm-mmm" is
+  now translated.
+- **Prefix:** it never leaks.
+- **Emotion signal:** round-trip agreement moves by 1.2 points on 600 items, which is within
+  noise. The teacher never saw the emotion, so the tokens can carry little signal yet.
+- **What would carry it:** emotionally faithful references, from human or LLM rewrites per
+  emotion, as a phase-4 dataset.
+
+`eval_mt.py` scores CTranslate2 on CUDA with INT8/FP16 when a GPU is present, as above; that is
+the runtime's `gpu_compute_type`. `--device cpu --compute-type int8` scores the CPU runtime.
+The two agree: FLORES chrF 56.72 / BLEU 31.47 on the CPU, against 56.70 / 31.35 on CUDA, with
+no leaks on either.
+
+## Emotion out: Kokoro style offsets (P2/P3)
+
+Kokoro-82M reads everything in a neutral style. emotion2vec+ heard Piper, plain Kokoro and
+controller-driven Kokoro alike as "neutral" on every RAVDESS clause. Extreme prosody moves
+arousal (happy/surprised) but not anger or sadness. `train/learn_style_offsets.py` learns one
+offset per emotion in Kokoro's 256-d style space:
+- **Objective:** gradient ascent on emotion2vec+ through the differentiable TTS, on the GPU.
+- **Radius:** Δ stays within the spread of the voices' own style vectors.
+- **Intelligibility term:** Whisper-small's loss on the Hindi text, above the neutral render's.
+
+`eval/eval_style_offsets.py` then judges held-out sentences with models that played no part in
+training: audeering's dimensional model for V·A·D, and Whisper-small for CER (neutral renders:
+0.48).
+
+| offset | independent V·A·D shift | direction vs prototype | Whisper CER | shipped |
+|---|---|---|---|---|
+| anger | A +0.11, D +0.08 | ✅ | 0.30 | yes |
+| joy | A +0.12, D +0.06 | ✅ | 0.31 | yes |
+| sadness | A −0.25, D −0.20 | ✅ (valence ~0) | 0.51 | yes |
+| fear | V +0.10, D −0.16 | ❌ fools the training judge only | 6.17 | no |
+| surprise | A +0.09 | ✅ | 1.79 (hallucinations) | no |
+
+Without the intelligibility term, CER rose to 0.59–0.87 and fear reached P = 1.00 with the
+training judge. That is an adversarial solution. Valence barely moves for any offset
+(|ΔV| ≤ 0.05): the offsets carry arousal and dominance.
+
+End to end on RAVDESS (`eval/eval_ecs.py`, judged by emotion2vec+ in the consistency stage):
+- **Piper and plain Kokoro:** 0–4% of clauses heard as non-neutral; arousal CCC in→out ≈ 0.01–0.03.
+- **Kokoro with controls and offsets:** 21–31% non-neutral; arousal CCC 0.10–0.35.
+- **Why a range:** the metric moves with benign changes. Trimming Kokoro's clause-edge silence
+  alone moved it from 0.35 to 0.13, because the judge pools over silence. With ~50 utterances and
+  one judge, it is noisy.
+- **Why ECS alone misleads:** ECS stays ≈0.82 throughout, since a neutral output still scores
+  1 − ‖src‖/2√3.
+
+`export/export_kokoro_onnx.py` builds the frame → phoneme alignment from cumulative durations.
+`torch.repeat_interleave` with per-phoneme counts exported as an ONNX `Loop` that ran once per
+phoneme on the host, which was 83 of 172 ms per clause on CUDA. The export now fails if a `Loop`
+or `Scan` appears. The re-exported model gives identical durations and lengths. Its spectra
+differ from the old model's by no more than two runs of the old model differ from each other
+(the decoder adds noise): 0.40–0.61 dB against 0.43–0.62 dB mean |log-mel|. CPU time is
+unchanged.
 
 ## Setup
 

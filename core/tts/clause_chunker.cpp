@@ -39,7 +39,12 @@ std::vector<Clause> chunk_clauses(std::string_view text, std::string_view langua
         ++current.words;
         const std::size_t min_len = out.empty() ? cfg.min_first_chars : cfg.min_chars;
         const bool last = i + 1 == words.size();
-        if (!last && ((ends_clause(words[i]) && current.text.size() >= min_len) || current.text.size() >= cfg.max_chars)) {
+        // The first clause may be cut short without punctuation: its synthesis time is the
+        // time to first audio. Leave at least two words for the rest.
+        const bool first_full = out.empty() && cfg.max_first_words > 0 && current.words >= cfg.max_first_words &&
+                                i + 2 < words.size();
+        if (!last && ((ends_clause(words[i]) && current.text.size() >= min_len) || current.text.size() >= cfg.max_chars ||
+                      first_full)) {
             flush();
         }
     }

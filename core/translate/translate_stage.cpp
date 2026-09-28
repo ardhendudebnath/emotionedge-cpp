@@ -94,7 +94,7 @@ void TranslateStage::translate_final(const Frame& u) {
     const TranslationResult result = translator->translate(request);
 
     std::uint32_t missing = 0;
-    const std::string restored = glossary_.restore(result.text, protected_text, &missing);
+    const std::string restored = glossary_.restore(remove_control_tokens(result.text), protected_text, &missing);
     if (missing > 0) glossary_misses_->inc(missing);
     const Markup target = parse_markup(restored, target_language_);
     const std::size_t target_words = split_words(target.plain, target_language_).size();
@@ -143,7 +143,8 @@ void TranslateStage::translate_draft(const Frame& t) {
     request.target_language = target_language_;
     request.target_prefix = committed_;
     const TranslationResult result = translator->translate(request);
-    const Markup draft = parse_markup(glossary_.restore(result.text, protected_text), target_language_);
+    const Markup draft =
+        parse_markup(glossary_.restore(remove_control_tokens(result.text), protected_text), target_language_);
     if (wait_k_.extend(committed_, split_words(draft.plain, target_language_), stable) == 0) return;
 
     Frame& out = ctx_->make(FrameKind::Translation);

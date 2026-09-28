@@ -28,43 +28,43 @@ for the real engines.
 | 1.1 Audio capture: miniaudio, 16 kHz mono f32, 20 ms frames, zero-alloc callback, SPSC ring | `audio/device.cpp`, `audio/ring_buffer.hpp`, `audio/frontend.cpp` | done; miniaudio **adapter** (`EE_WITH_MINIAUDIO`) |
 | 1.2 Front-end DSP: echo cancel (reference = our TTS), neural noise suppression, AGC + loudness | `audio/dsp.cpp`, `audio/frontend.cpp` | AGC + limiter **done**; the playback → AEC reference path is **done**; RNNoise / WebRTC AEC3 plug into `INoiseSuppressor` / `IEchoCanceller` (**planned**) |
 | 1.3 VAD & segmenter: speech/silence every ~30 ms, 160 ms hangover, partial chunks, barge-in | `audio/speech_detector.cpp`, `audio/silero_detector.cpp`, `audio/segmenter.cpp` | **done** (energy detector **stand-in**; Silero v5/v6 **adapter**, `EE_WITH_ONNXRUNTIME`) |
-| 1.4 Speaker encoder: ECAPA-TDNN, 192-d voice print for the TTS | `audio/speaker.cpp` | pitch voice print **stand-in**; ECAPA **planned** (phase 3) |
+| 1.4 Speaker encoder: ECAPA-TDNN, 192-d voice print for the TTS | `audio/speaker.cpp`, `audio/ecapa_encoder.cpp` | ECAPA-TDNN (SpeechBrain, exact ONNX export) **done**; pitch voice print **stand-in**. Every print also carries the speaker's median F0, which picks the TTS voice. ECAPA cosine against synthetic voices gets the gender right for only 11/24 RAVDESS actors; F0 gets 23/24 |
 
 ### 02 · Perceive
 
 | Box | Code | Status |
 |---|---|---|
 | 2.1 Streaming ASR: whisper.cpp, LocalAgreement-2, partial + final, word timestamps, language ID | `asr/local_agreement.cpp`, `asr/asr_stage.cpp`, `asr/whisper_engine.cpp` | **done**; scripted **stand-in**; whisper.cpp **adapter** (`EE_WITH_WHISPER`) |
-| 2.2 Emotion engine: acoustic (emotion2vec), prosody (F0 · energy · rate · jitter), lexical (DistilRoBERTa), gated late fusion, EMA | `emotion/prosody_features.cpp`, `emotion/acoustic.cpp`, `emotion/onnx_acoustic.cpp`, `emotion/lexical.cpp`, `emotion/fusion.cpp`, `emotion/emotion_stage.cpp` | fusion, EMA, prosody features (YIN F0) **done**; prosody-rules and lexicon **stand-ins**; emotion2vec+head ONNX **adapter**; DistilRoBERTa **planned** (phase 2) |
+| 2.2 Emotion engine: acoustic (emotion2vec), prosody (F0 · energy · rate · jitter), lexical (DistilRoBERTa), gated late fusion, EMA | `emotion/prosody_features.cpp`, `emotion/acoustic.cpp`, `emotion/onnx_acoustic.cpp`, `emotion/lexical.cpp`, `emotion/fusion.cpp`, `emotion/emotion_stage.cpp` | fusion, EMA, prosody features (YIN F0) **done**; emotion2vec+ base and DistilRoBERTa (with a C++ byte-level BPE tokenizer) through ONNX Runtime **done** (phase 2: classifiers mapped to V·A·D by `emotion/class_mapping.cpp`); prosody-rules and lexicon remain as **stand-ins** for builds without ORT |
 
 ### 03 · Understand
 
 | Box | Code | Status |
 |---|---|---|
 | 3.1 Context & emotion state: join text + emotion, hysteresis, emphasis = energy peaks on word timestamps | `emotion/state_tracker.cpp`, `emotion/fusion.cpp` | **done** |
-| 3.2 Emotion-aware translation: NLLB-200 INT8 on CTranslate2, `<emo=… a=… reg=…>` control tokens, wait-k drafts, final re-translation keeping the prefix, emphasis → target words, glossary, neutral fallback below τ | `translate/*` | **done**; phrasebook **stand-in**; CTranslate2 + SentencePiece **adapter** (`EE_WITH_CTRANSLATE2`) |
+| 3.2 Emotion-aware translation: NLLB-200 INT8 on CTranslate2, `<emo=… a=… reg=…>` control tokens, wait-k drafts, final re-translation keeping the prefix, emphasis → target words, glossary, neutral fallback below τ | `translate/*` | **done**; phrasebook **stand-in**; CTranslate2 + SentencePiece **adapter** (`EE_WITH_CTRANSLATE2`); phase-2 NLLB-600M LoRA trained on the control prefix (`ml/train/finetune_nllb_lora.py`). MT output is stripped of any echoed `<emo=…>` span before TTS and captions |
 | 3.3 Expressivity profiles per language | `prosody/expressivity.cpp`, `config/expressivity.yaml` | **done** (values are placeholders to calibrate) |
 
 ### 04 · Express
 
 | Box | Code | Status |
 |---|---|---|
-| 4.1 Emotion controller: V·A·D → pitch, range, rate, energy, pauses, voice quality; relative to the target baseline; emphasis boosts; closed-loop correction; 128-d style vector | `prosody/controller.cpp`, `prosody/controller_stage.cpp`, `prosody/style.cpp` | rules v1 + closed loop **done**; style anchors are **placeholders** until the StyleTTS2 style encoder (phase 3) |
-| 4.2 Expressive TTS: StyleTTS2 on style vector + voice print, clause chunker, HiFi-GAN 24 kHz, Piper/VITS fallback | `tts/clause_chunker.cpp`, `tts/formant_synth.cpp`, `tts/piper_engine.cpp`, `tts/tts_stage.cpp` | chunker **done**; formant **stand-in**; Piper **adapter** (`EE_WITH_PIPER`); StyleTTS2 **planned** (phase 3) |
+| 4.1 Emotion controller: V·A·D → pitch, range, rate, energy, pauses, voice quality; relative to the target baseline; emphasis boosts; closed-loop correction; 128-d style vector | `prosody/controller.cpp`, `prosody/controller_stage.cpp`, `prosody/style.cpp` | rules v1 + closed loop **done**. For Kokoro, per-emotion offsets in its 256-d style space are learned against an emotion classifier (`ml/train/learn_style_offsets.py`) and applied by V·A·D strength and confidence. The 128-d placeholder anchors remain for other engines |
+| 4.2 Expressive TTS: StyleTTS2 on style vector + voice print, clause chunker, HiFi-GAN 24 kHz, Piper/VITS fallback | `tts/clause_chunker.cpp`, `tts/formant_synth.cpp`, `tts/piper_engine.cpp`, `tts/tts_stage.cpp` | chunker **done** (first clause cappable for slow vocoders). Kokoro-82M (StyleTTS2 family, 24 kHz) **done** (`tts/kokoro_engine.cpp`, `tts/kokoro_g2p.cpp` = misaki's G2P ported to C++): the controller drives its durations, F0 shift, range, accents and final contour. On CUDA a clause takes ~70–95 ms whatever its length. Piper **fallback**; formant **stand-in** |
 
 ### 05 · Deliver
 
 | Box | Code | Status |
 |---|---|---|
 | 5.1 Playback: 60 ms jitter buffer, chunk crossfade, AEC reference, source ducking | `audio/playback.cpp`, `pipeline/session.cpp` (`mix_with_ducking`) | **done** |
-| 5.2 Emotion consistency: ECS = 1 − ‖ΔVAD‖/2√3, nudge 4.1 below threshold, log per utterance | `emotion/consistency_stage.cpp`, `telemetry/ecs.hpp` | **done** |
+| 5.2 Emotion consistency: ECS = 1 − ‖ΔVAD‖/2√3, nudge 4.1 below threshold, log per utterance | `emotion/consistency_stage.cpp`, `telemetry/ecs.hpp` | **done**; with the engines config the output is judged by emotion2vec+ (language-agnostic, one session shared with 2.2) |
 | 5.3 Outputs: speaker, live captions with emotion tags, gRPC/WebSocket, CLI/desktop, WAV + SRT/JSON | `pipeline/recorder.cpp`, `apps/cli` | CLI, WAV, SRT, JSON **done**; gRPC/WebSocket and desktop **planned** (phase 5) |
 
 ## Edge runtime (cross-cutting)
 
 | Service | Code | Status |
 |---|---|---|
-| Inference runtime: ORT execution providers CPU / CUDA / TensorRT / OpenVINO / CoreML / NNAPI, IOBinding, INT8/FP16 | `runtime/onnx.cpp`; device profiles in `models/manifest.json` | **adapter** (EP selection; Silero binds its output buffers) |
+| Inference runtime: ORT execution providers CPU / CUDA / TensorRT / OpenVINO / CoreML / NNAPI, IOBinding, INT8/FP16 | `runtime/onnx.cpp`; device profiles in `models/manifest.json`; `pipeline.device` in the YAML | CUDA **done** (phase 4, measured on an RTX 5070 Ti): `pipeline.device: auto` puts Kokoro, emotion2vec+, ECAPA and NLLB (CTranslate2 CUDA, INT8/FP16) on the GPU when the build has it, and falls back to the CPU otherwise. Devices can differ per model in one stage (`acoustic_device`, `lexical_device`). Other EPs: **adapter** (selection only). Silero binds its output buffers |
 | Scheduler: thread per stage, core-pinned, lock-free queues + backpressure, drops stale partials, never audio | `runtime/graph.cpp`, `runtime/spsc_queue.hpp`, `runtime/thread_util.cpp` | **done** (deterministic single-thread mode for offline runs and tests) |
 | Telemetry: per-stage p50/p95, RTF, ECS, queue depth, Perfetto trace, Prometheus | `telemetry/*` | **done** |
 | Model registry: SHA-256 verified files, hot-swap per language pair, device profiles | `runtime/model_registry.cpp`, `runtime/sha256.cpp` | **done** |

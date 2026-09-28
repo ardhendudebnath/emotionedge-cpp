@@ -26,7 +26,17 @@ std::unique_ptr<ITtsEngine> make_tts_engine(const Params& params, const ModelReg
         throw ConfigError("tts engine 'piper' needs a build with -DEE_WITH_PIPER=ON");
 #endif
     }
-    throw ConfigError("unknown tts engine '" + kind + "' (formant | piper; StyleTTS2 arrives with roadmap phase 3)");
+    if (kind == "kokoro") {
+#if defined(EE_HAVE_PIPER)
+        const std::string dir = resolve_model_path(params, registry, "model");
+        if (dir.empty()) throw ConfigError("tts engine 'kokoro' needs a 'model' (voice directory) or 'model_id'");
+        return make_kokoro_engine(dir, params, registry);
+#else
+        (void)registry;
+        throw ConfigError("tts engine 'kokoro' needs a build with -DEE_WITH_PIPER=ON (ONNX Runtime + espeak-ng)");
+#endif
+    }
+    throw ConfigError("unknown tts engine '" + kind + "' (formant | piper | kokoro)");
 }
 
 void TtsStage::open(StageContext& ctx) {
@@ -37,6 +47,7 @@ void TtsStage::open(StageContext& ctx) {
     chunker_.min_first_chars = static_cast<std::size_t>(p.integer("min_first_chars", 8));
     chunker_.min_chars = static_cast<std::size_t>(p.integer("min_chars", 24));
     chunker_.max_chars = static_cast<std::size_t>(p.integer("max_chars", 140));
+    chunker_.max_first_words = static_cast<std::size_t>(p.integer("max_first_words", 0));
     chunk_samples_ = static_cast<std::size_t>(engine->sample_rate() * p.integer("chunk_ms", 100) / 1000);
     use_voice_print_ = p.flag("use_voice_print", true);
 
@@ -60,8 +71,8 @@ void TtsStage::open(StageContext& ctx) {
 void TtsStage::process(Frame& f) {
     switch (f.kind) {
     case FrameKind::VoicePrint:
-        voices_[f.utterance] = f.voice;
-        latest_voice_ = f.voice;
+        voices_[f.utterance] = {f.voice, f.voice_f0};
+        latest_voice_ = {f.voice, f.voice_f0};
         have_voice_ = true;
         while (voices_.size() > 8) voices_.erase(voices_.begin());
         return;
@@ -111,11 +122,21 @@ void TtsStage::synthesize(const Job& job) {
     req.emphasis = job.clause.emphasis;
     req.style = &job.speech.style;
     req.utterance_final = job.last;
+    // The controller's target: the source emotion plus the closed-loop correction (4.1, 5.2).
+    EmotionState target = job.speech.emotion;
+    target.vad = (job.speech.emotion.vad + job.speech.delta).clamped();
+    target.label = nearest_label(target.vad);
+    req.emotion = &target;
     if (use_voice_print_) {
+        const SpeakerVoice* voice = nullptr;
         if (const auto it = voices_.find(job.speech.utterance); it != voices_.end()) {
-            req.voice = &it->second;
+            voice = &it->second;
         } else if (have_voice_) {
-            req.voice = &latest_voice_;
+            voice = &latest_voice_;
+        }
+        if (voice != nullptr) {
+            req.voice = &voice->print;
+            req.voice_f0 = voice->f0;
         }
     }
     engine->synthesize(req, result_);

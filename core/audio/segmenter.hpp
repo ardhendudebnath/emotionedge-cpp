@@ -76,6 +76,7 @@ private:
     int rate_ = 16000;
     std::size_t window_ = 480;
     std::size_t preroll_windows_ = 6;
+    bool barge_in_ = true;  ///< cancel the playing translation when new speech starts
 
     std::vector<float> pending_;
     std::int64_t pending_pos_ = 0;
