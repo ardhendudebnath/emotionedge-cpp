@@ -123,5 +123,39 @@ TEST(Playback, BargeInCancelsQueuedTranslation) {
     EXPECT_EQ(sink.pull(drained), 0u);  // flushed, and nothing new was queued
 }
 
+// Adaptive pacing (4.2) reads how far playout runs behind: the queued audio live, the timeline's
+// next free slot offline.
+TEST(Playback, PublishesItsBacklogForPacing) {
+    RingSink sink(24000, 1 << 16);
+    AudioIo live;
+    live.playback = &sink;
+    test::RecordingContext ctx;
+    ctx.services().audio = &live;
+    PlaybackStage stage;
+    stage.open(ctx);
+    Frame a = synth_chunk(1, 24000, 0, 1.0);  // 1 s, past the jitter buffer
+    stage.process(a);
+    EXPECT_NEAR(live.playout_delay(1.0), 1.0, 0.02);
+    std::vector<float> played(12000);
+    EXPECT_EQ(sink.pull(played), 12000u);
+    stage.tick();
+    EXPECT_NEAR(live.playout_delay(1.0), 0.5, 0.02);
+
+    TimelineSink timeline(24000);
+    AudioIo offline;
+    offline.timeline = &timeline;
+    test::RecordingContext octx;
+    octx.services().audio = &offline;
+    octx.telemetry().begin_utterance(1);
+    PlaybackStage ostage;
+    ostage.open(octx);
+    Frame b = synth_chunk(1, 48000, frame_flags::kClauseEnd | frame_flags::kFinal, 2.0);
+    ostage.process(b);
+    // 2 s placed from 2.735 s: the timeline is busy until 4.735 s, plus the 0.15 s gap. An
+    // utterance whose source ended at 3.0 s would start 1.15 s after its nominal 3.735 s.
+    EXPECT_NEAR(offline.playout_delay(3.0), 1.15, 0.01);
+    EXPECT_EQ(offline.playout_delay(10.0), 0.0);
+}
+
 }  // namespace
 }  // namespace ee

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -122,6 +123,20 @@ struct AudioIo {
     TimelineSink* timeline = nullptr;            ///< offline playout
     SpscRing<float>* echo_reference = nullptr;   ///< played audio at 16 kHz, for the AEC (1.2)
     std::atomic<bool> playback_active{false};    ///< translated speech is playing (barge-in)
+
+    // How far the translation runs behind, for the TTS's adaptive pacing (4.2). Playback (5.1)
+    // writes both; each run mode uses one.
+    /// Live: seconds of translated audio queued ahead of the speaker.
+    std::atomic<double> playout_queued_s{0.0};
+    /// Offline: an utterance whose source ended at `src_end` starts playing
+    /// max(0, playout_free_at_s - src_end) later than the nominal latency.
+    std::atomic<double> playout_free_at_s{-1e9};
+
+    /// How long audio for an utterance ending at `src_end` would wait behind earlier translations.
+    [[nodiscard]] double playout_delay(double src_end) const noexcept {
+        const double offline = playout_free_at_s.load(std::memory_order_relaxed) - src_end;
+        return std::max({0.0, playout_queued_s.load(std::memory_order_relaxed), offline});
+    }
 };
 
 /// Plays a recorded signal into a RingSource in real time, standing in for the capture

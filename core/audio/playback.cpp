@@ -69,6 +69,21 @@ void PlaybackStage::open(StageContext& ctx) {
     if (mode_ == Mode::Live && io_->echo_reference != nullptr) {
         echo_resampler_ = std::make_unique<Resampler>(out_rate_, ctx.pipeline().sample_rate);
     }
+    if (io_ != nullptr) {
+        io_->playout_queued_s.store(0.0);
+        io_->playout_free_at_s.store(-1e9);
+    }
+}
+
+void PlaybackStage::publish_backlog() {
+    if (mode_ == Mode::Live) {
+        const std::size_t queued = io_->playback->queued() + ready_.size();
+        io_->playout_queued_s.store(static_cast<double>(queued) / out_rate_, std::memory_order_relaxed);
+    } else if (mode_ == Mode::Offline) {
+        // The next utterance starts at max(end + gap, its src_end + latency): see deliver().
+        io_->playout_free_at_s.store(io_->timeline->end_seconds() + gap_s_ - offline_latency_s_,
+                                     std::memory_order_relaxed);
+    }
 }
 
 void PlaybackStage::begin_utterance(const Frame& f) {
@@ -98,6 +113,7 @@ void PlaybackStage::process(Frame& f) {
         if (mode_ == Mode::Live) {
             io_->playback->flush();
             io_->playback->set_streaming(false);
+            io_->playout_queued_s.store(0.0);
         }
         if (io_ != nullptr) io_->playback_active.store(false);
         return;
@@ -173,6 +189,7 @@ void PlaybackStage::deliver(bool final_chunk) {
         }
         break;
     }
+    publish_backlog();
     if (utterance_final_ && ready_.empty()) finish_utterance();
 }
 
@@ -200,6 +217,7 @@ void PlaybackStage::tick() {
     if (mode_ != Mode::Live) return;
     if (!ready_.empty()) deliver(utterance_final_);
     if (ready_.empty() && io_->playback->queued() == 0) io_->playback_active.store(false);
+    publish_backlog();  // the queue drains as it plays
 }
 
 void PlaybackStage::close() {

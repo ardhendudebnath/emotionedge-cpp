@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <string>
+#include <vector>
 
+#include "core/audio/audio_io.hpp"
 #include "core/audio/dsp.hpp"
 #include "core/audio/pitch.hpp"
 #include "core/audio/resampler.hpp"
@@ -199,6 +202,98 @@ TEST(TtsStage, BargeInDropsQueuedClauses) {
     stage.process(barge);
     stage.close();  // would synthesize anything still queued
     EXPECT_EQ(ctx.emitted.size(), first);
+}
+
+TEST(PacingConfig, RampsTheSpeakingRateWithTheBacklog) {
+    EXPECT_EQ(PacingConfig{}.speed(10.0), 1.0f);  // off by default
+    const PacingConfig pacing{.start_s = 0.25f, .full_s = 1.5f, .max_speed = 1.3f};
+    EXPECT_EQ(pacing.speed(0.0), 1.0f);
+    EXPECT_EQ(pacing.speed(0.25), 1.0f);
+    EXPECT_NEAR(pacing.speed(0.875), 1.15f, 1e-5f);
+    EXPECT_NEAR(pacing.speed(9.0), 1.3f, 1e-6f);
+    EXPECT_EQ(pacing.speed(0.0, 6.0, 1.0, 0.5), 1.0f);  // no fit term unless fit_next
+}
+
+// A translation that would still be playing when the next one is due (the speaker's usual gap
+// plus a similar utterance later) builds the queue: it is sped up before any backlog exists.
+TEST(PacingConfig, FitsATranslationBeforeTheNextOneIsDue) {
+    const PacingConfig pacing{.start_s = 0.25f, .full_s = 1.5f, .max_speed = 1.3f, .fit_next = true};
+    EXPECT_EQ(pacing.speed(0.0, 3.0, 2.0, 1.0), 1.0f);             // 3 s fits in 2 s + a 1 s gap
+    EXPECT_NEAR(pacing.speed(0.0, 3.6, 2.0, 1.0), 1.2f, 1e-5f);    // 3.6 s does not: 1.2x
+    EXPECT_EQ(pacing.speed(0.0, 3.6, 2.0, 3.0), 1.0f);             // a speaker who pauses leaves room
+    EXPECT_NEAR(pacing.speed(0.0, 10.0, 2.0, 1.0), 1.3f, 1e-6f);   // capped
+    EXPECT_NEAR(pacing.speed(1.5, 2.0, 2.0, 1.0), 1.3f, 1e-6f);    // the backlog term still applies
+}
+
+// Samples per clause of one utterance rendered by a TTS stage with pacing up to 1.3x.
+struct PacedRender {
+    AudioIo io;
+    test::RecordingContext ctx;
+    TtsStage stage;
+
+    PacedRender() {
+        ctx.services().audio = &io;
+        ctx.mutable_params().set("calibration", "false");
+        ctx.mutable_params().set("pacing.max_speed", "1.3");
+        stage.open(ctx);
+    }
+    void say(std::uint64_t utterance, const std::string& text) {
+        Frame speech;
+        speech.reset(FrameKind::Speech);
+        speech.utterance = utterance;
+        speech.language = "en";
+        speech.text = text;
+        stage.process(speech);
+    }
+    std::vector<std::size_t> clauses(std::uint64_t utterance) const {
+        std::vector<std::size_t> out{0};
+        for (const Frame& f : ctx.of(FrameKind::SynthAudio)) {
+            if (f.utterance != utterance) continue;
+            out.back() += f.audio.size();
+            if (f.has(frame_flags::kClauseEnd)) out.push_back(0);
+        }
+        out.pop_back();
+        return out;
+    }
+};
+
+// A translation that would wait behind the previous one is spoken faster, at one rate for the
+// whole utterance, even once the queue has drained.
+TEST(TtsStage, PacesAnUtteranceByThePlayoutBacklog) {
+    const std::string text = "First clause here, and a second clause, and then a third clause.";
+    PacedRender normal;
+    normal.say(1, text);
+    normal.stage.close();
+    PacedRender behind;
+    behind.io.playout_queued_s.store(3.0);
+    behind.say(1, text);
+    behind.io.playout_queued_s.store(0.0);
+    behind.stage.close();
+
+    const auto a = normal.clauses(1);
+    const auto b = behind.clauses(1);
+    ASSERT_GE(a.size(), 2u);
+    ASSERT_EQ(a.size(), b.size());
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const double ratio = static_cast<double>(b[i]) / static_cast<double>(a[i]);
+        EXPECT_LT(ratio, 0.9) << "clause " << i;  // syllables at 1/1.3; the formant voice's word gaps stay
+        EXPECT_GT(ratio, 1.0 / 1.3 - 0.02) << "clause " << i;
+    }
+}
+
+// Clauses still waiting in the TTS are backlog too: they have not reached playback yet.
+TEST(TtsStage, CountsItsOwnQueuedClausesAsBacklog) {
+    const std::string next = "And now the next sentence.";
+    PacedRender alone;
+    alone.say(2, next);
+    PacedRender queued;
+    queued.say(1, "A long first clause with many words in it, a second clause just as long as the first, "
+                  "and a third one that is longer still before it ends.");
+    queued.say(2, next);  // the first sentence's later clauses are still waiting
+    queued.stage.close();
+    ASSERT_EQ(alone.clauses(2).size(), 1u);
+    ASSERT_EQ(queued.clauses(2).size(), 1u);
+    EXPECT_LT(queued.clauses(2)[0], alone.clauses(2)[0] * 9 / 10);
 }
 
 }  // namespace

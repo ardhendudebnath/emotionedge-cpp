@@ -147,6 +147,18 @@ stages:
       max_first_words: 3
       threads: 6              # ORT spinning measured no faster here, at +50% CPU: left off
       chunk_ms: 100
+      # Phase 4: adaptive pacing. The Hindi runs 0.9-2.4x as long as the English, so translations
+      # queue up when the speaker talks on. An utterance is spoken faster when:
+      # - it would wait behind earlier audio (0.25 s -> 1.5 s of backlog), or
+      # - it would still be playing when the next one is due (fit_next: its source plus the
+      #   speaker's usual gap).
+      # Capped at 1.3x: Whisper's median CER on Kokoro's Hindi stays 0.15-0.16 up to 1.3x and
+      # rises to 0.26 at 1.4x (ml/eval/eval_tts_speed.py).
+      pacing:
+        max_speed: 1.3
+        fit_next: true
+        start_ms: 250
+        full_ms: 1500
 
   - name: playback
     type: playback

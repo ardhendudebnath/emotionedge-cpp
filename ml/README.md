@@ -148,6 +148,21 @@ End to end on RAVDESS (`eval/eval_ecs.py`, judged by emotion2vec+ in the consist
 - **Why ECS alone misleads:** ECS stays ≈0.82 throughout, since a neutral output still scores
   1 − ‖src‖/2√3.
 
+`eval/eval_tts_speed.py` sets the cap for the runtime's adaptive pacing. It renders 24 held-out
+sentences with the 4 voices at each speed, and Whisper-small transcribes them:
+
+| speed | median CER | mean CER, capped at 1 | CER > 0.5 | duration |
+|---|---|---|---|---|
+| 1.0 | 0.151 | 0.196 | 3% | 1.00× |
+| 1.1 | 0.149 | 0.199 | 4% | 0.94× |
+| 1.2 | 0.148 | 0.202 | 6% | 0.88× |
+| **1.3** | 0.163 | 0.207 | 4% | 0.81× |
+| 1.4 | 0.259 | 0.274 | 6% | 0.69× |
+| 1.5 | 0.279 | 0.305 | 9% | 0.65× |
+
+The cap is 1.3×. A plain mean is useless here: Whisper sometimes hallucinates on this Hindi, and
+the first 12-sentence sweep's plain mean went 0.48 → 0.63 → 0.36 without any trend.
+
 `export/export_kokoro_onnx.py` builds the frame → phoneme alignment from cumulative durations.
 `torch.repeat_interleave` with per-phoneme counts exported as an ONNX `Loop` that ran once per
 phoneme on the host, which was 83 of 172 ms per clause on CUDA. The export now fails if a `Loop`

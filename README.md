@@ -148,17 +148,39 @@ whisper.cpp runs on the CPU unless it is built with CUDA. Real-time runs, CPU fo
 | ASR final decode (CPU in both) | 220 ms | 248–274 → 203–207 | 405–444 → 356–455 |
 | Translation, final pass | 120 ms | 266–340 → 61–71 | 344–462 → 93–95 |
 | TTS first chunk | 160 ms | 340–373 → 63–71 | 397–429 → 93–95 |
-| End to end, jfk.wav | 800 ms (p95) | 1262 → **549** | 1652 → **795** |
-| End to end, 3 back-to-back sentences | 800 ms (p95) | 1786 → 1196 | 3375 → 2851 |
+| End to end, jfk.wav (15 GPU runs) | 800 ms (p95) | 1262 → **520–631** | 1652 → **762–877** |
+| End to end, 3 back-to-back sentences | 800 ms (p95) | 1786 → 1163–1229 | 3375 → 2720–2851 |
 
-- **jfk.wav meets the p95 target.** The run uses 20 s of CPU time instead of 51 s.
-- **Back-to-back speech still misses it.** The playout queue dominates there; adaptive pacing is
-  next.
+- **jfk.wav is at the p95 target:** under 800 ms in 8 of 15 runs. With 4 utterances, p95 is
+  the slowest one. The run uses 20 s of CPU time instead of 51 s.
+- **The rest is ASR and the playout queue.** whisper on the CPU still takes 200 ms p50 and
+  360–455 ms p95.
 - **Same output quality:**
   - NLLB with INT8/FP16 on CUDA scores FLORES chrF 56.70, against 56.72 for INT8 on the CPU.
   - emotion2vec+ on CUDA matches the CPU to 0.002 in V·A·D.
   - Kokoro's export lost a per-phoneme ONNX `Loop` that took half its GPU time. Its durations
     are unchanged.
+
+**Adaptive pacing** (phase 4) keeps the playout queue short. The Hindi runs 0.9–2.4× as long as
+the English, so when the speaker talks on, translations queue behind each other. The TTS stage
+raises an utterance's speaking rate, fixed for the whole utterance, when either:
+- it would wait behind earlier audio: from 0.25 s of backlog, reaching the cap at 1.5 s;
+- it would still be playing when the next translation is due (`fit_next`). The next is expected
+  after the speaker's recent gap plus an utterance like this one.
+
+The cap is 1.3×: Whisper-small's median CER on Kokoro's Hindi is 0.15 at 1.0×, 0.16 at 1.3× and
+0.26 at 1.4× (`ml/eval/eval_tts_speed.py`). Real time on the GPU, two runs each:
+
+| 3 back-to-back sentences | End to end p50 | End to end p95 | Playout buffer p95 |
+|---|---|---|---|
+| pacing off | 1163 ms | 2785 ms | 2130–2164 ms |
+| **pacing on** | **942–991 ms** | **1674–1738 ms** | **1008–1087 ms** |
+
+- **jfk.wav** is unchanged within noise: its gaps leave room.
+- **RAVDESS:** none of the 51 utterances of the 48-clip set is sped up, since pauses separate
+  them.
+- **Limit:** the first utterance's length is predicted from the English calibration render,
+  which runs about 30% short for Hindi. Later ones use the voice's measured pace.
 
 To build for CUDA, use ONNX Runtime's GPU package and a CTranslate2 built with
 `-DWITH_CUDA=ON -DWITH_CUDNN=ON`:
@@ -230,9 +252,9 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
 3. **Emotion out** (done). Kokoro-82M (StyleTTS2 family) with controller-driven durations, F0
    and contour, learned per-emotion style offsets, and the ECAPA-TDNN voice print. See
    `ml/README.md` for what transfers: arousal and dominance, not yet valence.
-4. **Closed loop & speed** (in progress). GPU execution (done: CUDA for ORT and CTranslate2,
-   `pipeline.device: auto`). Next: adaptive pacing of the playout queue, speaker-aware barge-in,
-   whisper on the GPU, an ECS-trained controller and emotion-faithful MT data.
+4. **Closed loop & speed** (in progress). Done: GPU execution (CUDA for ORT and CTranslate2,
+   `pipeline.device: auto`) and adaptive pacing of the playout queue. Next: speaker-aware
+   barge-in, whisper on the GPU, an ECS-trained controller and emotion-faithful MT data.
 5. **Ship.** Desktop app, gRPC server, Android and Jetson builds, public benchmark report.
 
 Every phase ends with the P5 quality gate (`ml/eval/quality_gate.py`).
