@@ -11,6 +11,10 @@ pipeline:
   target_language: hi
   sample_rate: 16000
   models: ${config_dir}/../models/manifest.json
+  # Phase 4: stages without their own `device` run on CUDA when the build has it (ONNX Runtime's
+  # GPU package, CTranslate2 built with CUDA) and a GPU is present, else on the CPU. Force one
+  # with --set pipeline.device=cpu (or cuda, which warns when it has to fall back).
+  device: auto
 
 telemetry:
   flush_ms: 1000
@@ -82,6 +86,7 @@ stages:
       acoustic_max_seconds: 6     # the utterance's last 6 s; cost grows with length
       lexical: onnx
       lexical_model_id: emotion.lexical.distilroberta_en
+      lexical_device: cpu         # its INT8 graph: 4 ms per sentence on the CPU, 10 ms on CUDA
       threads: 4
       # emotion2vec+ also reads valence from the voice, unlike the prosody rules (0.3). Text is
       # still the stronger valence cue, but less so on arousal and dominance.
@@ -105,8 +110,8 @@ stages:
       model_id: mt.nllb200.distilled600m.emo.int8
       control_tokens: on
       arousal_step: 0.1       # the prefix format the LoRA was trained on
-      device: cpu
-      compute_type: int8
+      compute_type: int8      # on the CPU
+      gpu_compute_type: int8_float16   # on CUDA: what the phase-2 quality gate measured
       beam: 2
       threads: 4
       expressivity: ${config_dir}/expressivity.yaml
@@ -123,8 +128,9 @@ stages:
     tick_ms: 5
     params:
       # Phase 3: Kokoro-82M (StyleTTS2 family) with the emotion controller driving its duration,
-      # F0 and final contour, plus learned per-emotion style offsets. Its vocoder is costlier than
-      # Piper's, so the first clause is capped at 3 words and the thread gets 6 cores.
+      # F0 and final contour, plus learned per-emotion style offsets. On CUDA a clause takes
+      # ~70-95 ms whatever its length. On the CPU its vocoder costs ~300 ms, hence the 3-word cap
+      # on the first clause and 6 cores (on the GPU the cap measured no different).
       # Piper fallback: engine: piper, model_id: tts.piper.hi_IN.pratham.medium, threads: 2.
       engine: kokoro
       model_id: tts.kokoro.82m.hi

@@ -50,7 +50,10 @@ public:
         }
         whisper_log_set(forward_whisper_log, nullptr);
         whisper_context_params cparams = whisper_context_default_params();
-        cparams.use_gpu = params.flag("gpu", true);
+        // A GPU backend is used only when whisper.cpp was built with one (GGML_CUDA, Metal, ...);
+        // `device: cpu` keeps a GPU build on the CPU.
+        cparams.use_gpu = params.flag("gpu", params.str("device", "auto") != "cpu");
+        cparams.gpu_device = static_cast<int>(params.integer("gpu_id", 0));
         ctx_ = whisper_init_from_file_with_params(model_path.c_str(), cparams);
         if (ctx_ == nullptr) throw ConfigError("cannot load whisper model '" + model_path + "'");
         if (params.flag("warmup", true)) {

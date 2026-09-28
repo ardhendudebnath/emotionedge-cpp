@@ -182,8 +182,12 @@ def main() -> int:
             duration = torch.sigmoid(m.predictor.duration_proj(x)).sum(dim=-1) / speed  # [1, T]
             duration = duration * dur_scale.unsqueeze(0)
             pred_dur = torch.round(duration).clamp(min=1).long().squeeze(0)  # [T]
-            frame_token = torch.repeat_interleave(torch.arange(t), pred_dur)  # [F]
-            aln = (torch.arange(t).unsqueeze(1) == frame_token.unsqueeze(0)).float().unsqueeze(0)  # [1, T, F]
+            # One-hot frame -> token alignment from cumulative durations: token k owns frames
+            # [ends[k] - pred_dur[k], ends[k]). repeat_interleave with per-token counts exports as
+            # an ONNX Loop that runs once per token, which was half of Kokoro's time on a GPU.
+            ends = torch.cumsum(pred_dur, dim=0)  # [T]
+            frames = torch.arange(ends[-1]).unsqueeze(0)  # [1, F]
+            aln = ((frames >= (ends - pred_dur).unsqueeze(1)) & (frames < ends.unsqueeze(1))).float().unsqueeze(0)
             en = d.transpose(-1, -2) @ aln
             f0, n = m.predictor.F0Ntrain(en, s)  # [1, F0 frames]
             # Per-token accents spread over each token's frames, then onto the F0 rate.
@@ -262,6 +266,12 @@ def main() -> int:
                                         "accent": {0: "tokens"}, "audio": {0: "samples"},
                                         "durations": {0: "tokens"}},
                           opset_version=args.opset, dynamo=False)
+    # A loop in the graph runs step by step on the host, between GPU kernels.
+    import onnx  # type: ignore
+
+    loops = [n.name for n in onnx.load(str(onnx_path)).graph.node if n.op_type in ("Loop", "Scan")]
+    if loops:
+        raise SystemExit(f"the exported graph has loops ({', '.join(loops[:5])}); vectorize them")
     session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
 
     def run_onnx(ids_, style_, speed_=1.0, dur_=None, acc_=None, pitch=0.0, range_=1.0, fall_=0.0):

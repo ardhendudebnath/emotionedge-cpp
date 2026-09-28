@@ -6,6 +6,7 @@
 //   output "embedding" float32 [192]          L2-normalized
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -23,9 +24,16 @@ namespace fs = std::filesystem;
 
 class EcapaSpeakerEncoder final : public ISpeakerEncoder {
 public:
-    EcapaSpeakerEncoder(const std::string& path, const onnx::SessionConfig& config)
+    EcapaSpeakerEncoder(const std::string& path, const onnx::SessionConfig& config, bool warmup)
         : session_(onnx::shared_session(fs::is_directory(path) ? (fs::path(path) / "model.onnx").string() : path,
-                                        config)) {}
+                                        config)) {
+        // The first run pays for allocations (and, on a GPU, kernel loading): not the first speaker.
+        if (warmup) {
+            std::vector<float> tone(16000);
+            for (std::size_t i = 0; i < tone.size(); ++i) tone[i] = 0.1f * std::sin(0.0864f * static_cast<float>(i));
+            (void)embed(tone, 16000);
+        }
+    }
 
     SpeakerEmbedding embed(std::span<const float> audio, int sample_rate) override {
         SpeakerEmbedding out{};
@@ -54,7 +62,8 @@ private:
 
 std::unique_ptr<ISpeakerEncoder> make_ecapa_encoder(const std::string& path, const Params& params,
                                                     const ModelRegistry* registry) {
-    return std::make_unique<EcapaSpeakerEncoder>(path, onnx::session_config(params, registry));
+    return std::make_unique<EcapaSpeakerEncoder>(path, onnx::session_config(params, registry),
+                                                 params.flag("warmup", true));
 }
 
 }  // namespace ee

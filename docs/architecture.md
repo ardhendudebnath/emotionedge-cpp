@@ -50,7 +50,7 @@ for the real engines.
 | Box | Code | Status |
 |---|---|---|
 | 4.1 Emotion controller: V·A·D → pitch, range, rate, energy, pauses, voice quality; relative to the target baseline; emphasis boosts; closed-loop correction; 128-d style vector | `prosody/controller.cpp`, `prosody/controller_stage.cpp`, `prosody/style.cpp` | rules v1 + closed loop **done**. For Kokoro, per-emotion offsets in its 256-d style space are learned against an emotion classifier (`ml/train/learn_style_offsets.py`) and applied by V·A·D strength and confidence. The 128-d placeholder anchors remain for other engines |
-| 4.2 Expressive TTS: StyleTTS2 on style vector + voice print, clause chunker, HiFi-GAN 24 kHz, Piper/VITS fallback | `tts/clause_chunker.cpp`, `tts/formant_synth.cpp`, `tts/piper_engine.cpp`, `tts/tts_stage.cpp` | chunker **done** (first clause cappable for slow vocoders). Kokoro-82M (StyleTTS2 family, 24 kHz) **done** (`tts/kokoro_engine.cpp`, `tts/kokoro_g2p.cpp` = misaki's G2P ported to C++): the controller drives its durations, F0 shift, range, accents and final contour. Piper **fallback**; formant **stand-in** |
+| 4.2 Expressive TTS: StyleTTS2 on style vector + voice print, clause chunker, HiFi-GAN 24 kHz, Piper/VITS fallback | `tts/clause_chunker.cpp`, `tts/formant_synth.cpp`, `tts/piper_engine.cpp`, `tts/tts_stage.cpp` | chunker **done** (first clause cappable for slow vocoders). Kokoro-82M (StyleTTS2 family, 24 kHz) **done** (`tts/kokoro_engine.cpp`, `tts/kokoro_g2p.cpp` = misaki's G2P ported to C++): the controller drives its durations, F0 shift, range, accents and final contour. On CUDA a clause takes ~70–95 ms whatever its length. Piper **fallback**; formant **stand-in** |
 
 ### 05 · Deliver
 
@@ -64,7 +64,7 @@ for the real engines.
 
 | Service | Code | Status |
 |---|---|---|
-| Inference runtime: ORT execution providers CPU / CUDA / TensorRT / OpenVINO / CoreML / NNAPI, IOBinding, INT8/FP16 | `runtime/onnx.cpp`; device profiles in `models/manifest.json` | **adapter** (EP selection; Silero binds its output buffers) |
+| Inference runtime: ORT execution providers CPU / CUDA / TensorRT / OpenVINO / CoreML / NNAPI, IOBinding, INT8/FP16 | `runtime/onnx.cpp`; device profiles in `models/manifest.json`; `pipeline.device` in the YAML | CUDA **done** (phase 4, measured on an RTX 5070 Ti): `pipeline.device: auto` puts Kokoro, emotion2vec+, ECAPA and NLLB (CTranslate2 CUDA, INT8/FP16) on the GPU when the build has it, and falls back to the CPU otherwise. Devices can differ per model in one stage (`acoustic_device`, `lexical_device`). Other EPs: **adapter** (selection only). Silero binds its output buffers |
 | Scheduler: thread per stage, core-pinned, lock-free queues + backpressure, drops stale partials, never audio | `runtime/graph.cpp`, `runtime/spsc_queue.hpp`, `runtime/thread_util.cpp` | **done** (deterministic single-thread mode for offline runs and tests) |
 | Telemetry: per-stage p50/p95, RTF, ECS, queue depth, Perfetto trace, Prometheus | `telemetry/*` | **done** |
 | Model registry: SHA-256 verified files, hot-swap per language pair, device profiles | `runtime/model_registry.cpp`, `runtime/sha256.cpp` | **done** |

@@ -354,6 +354,11 @@ int cmd_say(const Args& args) {
         std::replace(opt.begin(), opt.end(), '_', '-');
         if (args.has(opt)) params.set(key, args.get(opt));
     }
+    // Any other engine parameter: --set tts.device=cuda, --set tts.voice=hm_omega, ...
+    for (const auto& [key, value] : args.sets) {
+        if (key.rfind("tts.", 0) != 0) throw std::runtime_error("say takes only tts.<param> overrides, not '" + key + "'");
+        params.set(key.substr(4), value);
+    }
     std::unique_ptr<ModelRegistry> registry;
     if (const fs::path manifest = args.get("manifest"); !manifest.empty()) {
         registry = std::make_unique<ModelRegistry>(ModelRegistry::load(manifest));
@@ -395,6 +400,7 @@ int cmd_say(const Args& args) {
 int cmd_emotion(const Args& args) {
     PipelineSpec spec = load_pipeline(resolve_config(args));
     for (const auto& [key, value] : args.sets) apply_override(spec, key, value);
+    spec.apply_device_default();
     const StageSpec* stage = spec.find_stage("emotion");
     if (stage == nullptr) throw std::runtime_error("the pipeline has no 'emotion' stage");
     const Params& params = stage->params;

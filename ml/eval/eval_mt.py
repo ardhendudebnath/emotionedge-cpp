@@ -35,13 +35,16 @@ CLASSIFIER = "j-hartmann/emotion-english-distilroberta-base"
 
 
 class Ct2Nllb:
-    def __init__(self, model_dir: Path, beam: int = 2) -> None:
+    def __init__(self, model_dir: Path, beam: int = 2, device: str = "auto", compute_type: str = "auto") -> None:
         import ctranslate2  # type: ignore
         import sentencepiece as spm  # type: ignore
 
-        cuda = ctranslate2.get_cuda_device_count() > 0
-        self.translator = ctranslate2.Translator(str(model_dir), device="cuda" if cuda else "cpu",
-                                                 compute_type="int8_float16" if cuda else "int8")
+        # The runtime's two settings: CPU int8, or CUDA int8_float16 (pipeline.engines.yaml).
+        if device == "auto":
+            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        if compute_type == "auto":
+            compute_type = "int8_float16" if device == "cuda" else "int8"
+        self.translator = ctranslate2.Translator(str(model_dir), device=device, compute_type=compute_type)
         self.sp = spm.SentencePieceProcessor(model_file=str(model_dir / "sentencepiece.bpe.model"))
         self.beam = beam
 
@@ -67,10 +70,12 @@ def main() -> int:
     parser.add_argument("--flores", type=Path, help="flores200_dataset directory")
     parser.add_argument("--corpus", type=Path, help="JSONL with prefix/src/tgt/split (valid split is used)")
     parser.add_argument("--backtranslate", type=Path, help="CT2 NLLB model for hin->eng round trips")
+    parser.add_argument("--device", default="auto", help="cpu | cuda | auto (cuda when available)")
+    parser.add_argument("--compute-type", default="auto", help="auto: int8 on cpu, int8_float16 on cuda")
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
 
-    mt = Ct2Nllb(args.model)
+    mt = Ct2Nllb(args.model, device=args.device, compute_type=args.compute_type)
     metrics = {}
     suffix = f"_{args.name}"
     if args.flores:

@@ -27,7 +27,18 @@ Outputs go to `--out DIR` (default `out/<command>`):
 - `trace.json`: written with `--trace`. Open it in ui.perfetto.dev.
 
 Any setting can be overridden with `--set stage.param=value`, for example
-`--set translate.engine=ct2`.
+`--set translate.engine=ct2`. `say` takes `--set tts.param=value`.
+
+Devices:
+- `--set pipeline.device=cpu` (or `cuda`, or `auto`, which the engines config uses) applies to
+  every stage that does not name its own `device`.
+  - `auto` uses CUDA when the build has it, and otherwise stays on the CPU without a warning.
+  - `cuda`, or `auto` in a CUDA build, warns when it has to fall back to the CPU: no GPU, or
+    CUDA/cuDNN libraries missing from the loader path.
+- `--set emotion.acoustic_device=cuda` / `lexical_device` place a stage's two models separately.
+- `--set tts.ort_profile=out/kokoro` writes ONNX Runtime's per-node profile (op, device, time),
+  e.g. to find nodes that leave the GPU.
+- `gpu_id` picks the GPU.
 
 ## Planned (roadmap phase 5 "Ship")
 

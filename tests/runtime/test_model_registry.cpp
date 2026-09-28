@@ -6,6 +6,10 @@
 #include "core/runtime/model_registry.hpp"
 #include "core/runtime/sha256.hpp"
 
+#if defined(EE_HAVE_ONNXRUNTIME)
+#include "core/runtime/onnx.hpp"
+#endif
+
 namespace ee {
 namespace {
 
@@ -108,6 +112,39 @@ TEST(ModelRegistry, RejectsMalformedManifests) {
     EXPECT_THROW((void)ModelRegistry::parse(R"({"language_packs": {"en-hi": {"mt": "nope"}}})", "."),
                  ConfigError);
 }
+
+#if defined(EE_HAVE_ONNXRUNTIME)
+// Phase 4: one stage can run its models on different devices (emotion2vec+ on the GPU,
+// DistilRoBERTa's INT8 on the CPU); the manifest's profile supplies the providers and the
+// stage's own threads win; `auto` becomes what this ORT build has.
+TEST(OnnxSessionConfig, ResolvesDevicesPerModel) {
+    const auto reg = ModelRegistry::parse(R"({"device_profiles": {
+        "cpu": {"execution_providers": ["cpu"], "threads": 4},
+        "cuda": {"execution_providers": ["cuda", "cpu"], "threads": 2}}})", ".");
+    Params p;
+    p.set("device", "cpu");
+    p.set("acoustic_device", "cuda");
+    p.set("threads", "6");
+    const onnx::SessionConfig acoustic = onnx::session_config(p, &reg, "acoustic_");
+    EXPECT_EQ(acoustic.providers, (std::vector<std::string>{"cuda", "cpu"}));
+    EXPECT_EQ(acoustic.intra_threads, 6);
+    EXPECT_EQ(onnx::session_config(p, &reg, "lexical_").providers, std::vector<std::string>{"cpu"});
+
+    Params profile_threads;
+    profile_threads.set("device", "cuda");
+    EXPECT_EQ(onnx::session_config(profile_threads, &reg).intra_threads, 2);
+
+    Params automatic;
+    automatic.set("device", "auto");
+    EXPECT_EQ(onnx::session_config(automatic, &reg).providers.front(),
+              onnx::provider_available("cuda") ? "cuda" : "cpu");
+    EXPECT_TRUE(onnx::provider_available("cpu"));
+
+    Params unprofiled;  // no manifest profile: the device names the provider
+    unprofiled.set("device", "tensorrt");
+    EXPECT_EQ(onnx::session_config(unprofiled, nullptr).providers, (std::vector<std::string>{"tensorrt", "cpu"}));
+}
+#endif
 
 TEST(HotSwap, PublishesNewEnginesAtomically) {
     HotSwap<int> slot;
