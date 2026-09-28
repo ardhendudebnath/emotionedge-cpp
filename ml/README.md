@@ -108,6 +108,11 @@ What the numbers show:
 - **What would carry it:** emotionally faithful references, from human or LLM rewrites per
   emotion, as a phase-4 dataset.
 
+`eval_mt.py` scores CTranslate2 on CUDA with INT8/FP16 when a GPU is present, as above; that is
+the runtime's `gpu_compute_type`. `--device cpu --compute-type int8` scores the CPU runtime.
+The two agree: FLORES chrF 56.72 / BLEU 31.47 on the CPU, against 56.70 / 31.35 on CUDA, with
+no leaks on either.
+
 ## Emotion out: Kokoro style offsets (P2/P3)
 
 Kokoro-82M reads everything in a neutral style. emotion2vec+ heard Piper, plain Kokoro and
@@ -142,6 +147,14 @@ End to end on RAVDESS (`eval/eval_ecs.py`, judged by emotion2vec+ in the consist
   one judge, it is noisy.
 - **Why ECS alone misleads:** ECS stays ≈0.82 throughout, since a neutral output still scores
   1 − ‖src‖/2√3.
+
+`export/export_kokoro_onnx.py` builds the frame → phoneme alignment from cumulative durations.
+`torch.repeat_interleave` with per-phoneme counts exported as an ONNX `Loop` that ran once per
+phoneme on the host, which was 83 of 172 ms per clause on CUDA. The export now fails if a `Loop`
+or `Scan` appears. The re-exported model gives identical durations and lengths. Its spectra
+differ from the old model's by no more than two runs of the old model differ from each other
+(the decoder adds noise): 0.40–0.61 dB against 0.43–0.62 dB mean |log-mel|. CPU time is
+unchanged.
 
 ## Setup
 

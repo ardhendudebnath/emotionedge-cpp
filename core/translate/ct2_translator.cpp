@@ -3,6 +3,7 @@
 //
 // Model directory: the output of `ct2-transformers-converter --model facebook/nllb-200-distilled-600M
 // --quantization int8` plus the model's `sentencepiece.bpe.model` (see ml/export/convert_nllb_ct2.sh).
+#include <ctranslate2/devices.h>
 #include <ctranslate2/translator.h>
 #include <sentencepiece_processor.h>
 
@@ -11,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "core/runtime/log.hpp"
 #include "core/translate/control_tokens.hpp"
 #include "core/translate/languages.hpp"
 #include "core/translate/translator.hpp"
@@ -44,9 +46,33 @@ public:
         if (!status.ok()) throw ConfigError("cannot load SentencePiece model '" + spm + "': " + status.ToString());
         ctranslate2::ReplicaPoolConfig pool;
         pool.num_threads_per_replica = static_cast<std::size_t>(params.integer("threads", 4));
-        translator_ = std::make_unique<ctranslate2::Translator>(
-            model_dir, ctranslate2::str_to_device(params.str("device", "cpu")),
-            ctranslate2::str_to_compute_type(params.str("compute_type", "int8")), std::vector<int>{0}, false, pool);
+        // device: cpu | cuda | auto. CUDA needs a CTranslate2 built with it and a GPU; without them
+        // `auto` quietly, and `cuda` with a warning, run on the CPU, as ORT's providers fall back.
+        // The compute type follows the device: compute_type on the CPU, gpu_compute_type on CUDA.
+        const std::string requested = params.str("device", "cpu");
+        const bool gpu_visible = requested != "cpu" && ctranslate2::get_device_count(ctranslate2::Device::CUDA) > 0;
+        if (requested == "cuda" && !gpu_visible) {
+            log::warn("translate: no CUDA device for CTranslate2 (not built with CUDA, or no GPU); using the CPU");
+        } else if (requested != "cpu" && requested != "cuda" && requested != "auto") {
+            throw ConfigError("translate device must be cpu, cuda or auto");
+        }
+        const ctranslate2::Device device = gpu_visible ? ctranslate2::Device::CUDA : ctranslate2::Device::CPU;
+        const std::string compute_type =
+            gpu_visible ? params.str("gpu_compute_type", "int8_float16") : params.str("compute_type", "int8");
+        const int gpu = static_cast<int>(params.integer("gpu_id", 0));
+        translator_ = std::make_unique<ctranslate2::Translator>(model_dir, device,
+                                                                ctranslate2::str_to_compute_type(compute_type),
+                                                                std::vector<int>{gpu}, false, pool);
+        if (gpu_visible) log::info("translate: CTranslate2 on cuda (gpu ", gpu, ", ", compute_type, ")");
+        // The first translation pays for allocations (and, on a GPU, cuBLAS setup): not the first
+        // utterance.
+        if (params.flag("warmup", true)) {
+            TranslationRequest warm;
+            warm.source = "Hello, how are you?";
+            warm.source_language = "en";
+            warm.target_language = "hi";
+            (void)translate(warm);
+        }
     }
 
     TranslationResult translate(const TranslationRequest& r) override {

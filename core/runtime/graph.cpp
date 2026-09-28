@@ -142,6 +142,7 @@ struct Graph::Impl {
 
     Impl(PipelineSpec s, const StageRegistry& registry, Services svc) : spec(std::move(s)), services(svc) {
         validate(spec);
+        spec.apply_device_default();
         if (services.telemetry == nullptr) {
             own_telemetry = std::make_unique<telemetry::Telemetry>();
             services.telemetry = own_telemetry.get();

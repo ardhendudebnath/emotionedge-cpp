@@ -57,6 +57,9 @@ struct PipelineSpec {
     std::string target_language = "hi";
     int sample_rate = 16000;
     std::string models_manifest;
+    /// Default `device` for stages that set none: cpu | cuda | auto (cuda when this build and
+    /// machine have it, else cpu). Empty leaves each engine's own default (cpu).
+    std::string device;
     TelemetrySpec telemetry;
     std::vector<ThreadSpec> threads;
     std::vector<StageSpec> stages;
@@ -64,6 +67,8 @@ struct PipelineSpec {
 
     [[nodiscard]] const StageSpec* find_stage(std::string_view name) const;
     [[nodiscard]] StageSpec* find_stage(std::string_view name);
+    /// Copies `device` into every stage that sets none. The graph calls it once overrides are in.
+    void apply_device_default();
 };
 
 /// Parses a pipeline YAML file. `${config_dir}` in any string value expands to the

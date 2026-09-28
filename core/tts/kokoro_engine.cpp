@@ -117,6 +117,16 @@ public:
         fixed_ = voice != "auto";
         current_ = find(fixed_ ? voice : params.str("default_voice", voices_.front().name));
         espeak::initialize(params.str("espeak_data"));
+        // The first synthesis pays for allocations, espeak's voice load and, on a GPU, kernel
+        // loading (0.5-0.8 s on CUDA): not the first clause.
+        if (params.flag("warmup", true)) {
+            const std::string text = params.str("warmup_text", espeak_voice_ == "hi" ? "नमस्ते, आप कैसे हैं?" : "Hello there.");
+            SynthesisRequest warm;
+            warm.text = text;
+            warm.language = espeak_voice_;
+            SynthesisResult ignored;
+            synthesize(warm, ignored);
+        }
     }
 
     int sample_rate() const noexcept override { return kSampleRate; }

@@ -9,6 +9,7 @@
 //      input "waveform"; output "vad" [1, 3] in [-1, 1]; optional "confidence" [1, 3] in [0, 1]
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -42,6 +43,12 @@ public:
             for (std::size_t i = 0; i < session_->GetOutputCount(); ++i) {
                 if (session_->GetOutputNameAllocated(i, allocator_).get() == confidence_output_) has_confidence_ = true;
             }
+        }
+        // The first run pays for allocations (and, on a GPU, kernel loading): not the first utterance.
+        if (params.flag("warmup", true)) {
+            std::vector<float> tone(std::max<std::size_t>(min_samples_, 16000));
+            for (std::size_t i = 0; i < tone.size(); ++i) tone[i] = 0.1f * std::sin(0.0864f * static_cast<float>(i));
+            (void)estimate(tone, {}, 0.01f);
         }
     }
 
@@ -95,7 +102,7 @@ private:
 
 std::unique_ptr<IAcousticEmotionModel> make_onnx_acoustic_model(const std::string& path, const Params& params,
                                                                 const ModelRegistry* registry) {
-    return std::make_unique<OnnxAcousticEmotionModel>(path, onnx::session_config(params, registry), params);
+    return std::make_unique<OnnxAcousticEmotionModel>(path, onnx::session_config(params, registry, "acoustic_"), params);
 }
 
 }  // namespace ee

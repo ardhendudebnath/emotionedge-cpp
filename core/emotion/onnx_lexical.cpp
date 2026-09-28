@@ -112,7 +112,7 @@ private:
 
 std::unique_ptr<ILexicalEmotionModel> make_onnx_lexical_model(const std::string& dir, const Params& params,
                                                               const ModelRegistry* registry) {
-    return std::make_unique<OnnxLexicalEmotionModel>(dir, onnx::session_config(params, registry));
+    return std::make_unique<OnnxLexicalEmotionModel>(dir, onnx::session_config(params, registry, "lexical_"));
 }
 
 }  // namespace ee

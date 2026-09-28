@@ -160,6 +160,26 @@ TEST(Config, AppliesOverrides) {
     EXPECT_THROW(apply_override(spec, "noparam", "1"), ConfigError);
 }
 
+// pipeline.device is one switch for every model stage (phase 4): stages that set no device get
+// it, a stage's own device wins, and --set pipeline.device lands before the graph applies it.
+TEST(Config, PipelineDeviceIsTheStagesDefault) {
+    PipelineSpec spec = parse_pipeline(R"(
+pipeline: { device: auto }
+stages:
+  - { name: tts }
+  - { name: vad, params: { device: cpu } }
+)");
+    EXPECT_EQ(spec.device, "auto");
+    apply_override(spec, "pipeline.device", "cuda");
+    spec.apply_device_default();
+    EXPECT_EQ(spec.find_stage("tts")->params.str("device"), "cuda");
+    EXPECT_EQ(spec.find_stage("vad")->params.str("device"), "cpu");
+
+    PipelineSpec plain = parse_pipeline("stages:\n  - { name: tts }\n");
+    plain.apply_device_default();
+    EXPECT_FALSE(plain.find_stage("tts")->params.has("device"));
+}
+
 // Every graph shipped in config/ must parse, including the engine configs no test otherwise runs.
 TEST(Config, ShippedPipelinesParse) {
     int parsed = 0;
