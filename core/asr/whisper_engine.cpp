@@ -1,9 +1,11 @@
 // whisper.cpp adapter (blueprint 2.1). Compiled only with -DEE_WITH_WHISPER=ON.
+#include <ggml-backend.h>
 #include <whisper.h>
 
 #include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/asr/asr_engine.hpp"
@@ -14,11 +16,24 @@ namespace ee {
 namespace {
 
 void forward_whisper_log(ggml_log_level level, const char* text, void* /*user_data*/) {
+    std::string_view line(text);
+    while (!line.empty() && line.back() == '\n') line.remove_suffix(1);
     if (level == GGML_LOG_LEVEL_ERROR) {
-        log::error("whisper: ", text);
+        log::error("whisper: ", line);
     } else if (level == GGML_LOG_LEVEL_WARN) {
-        log::warn("whisper: ", text);
+        log::warn("whisper: ", line);
+    } else if (level == GGML_LOG_LEVEL_INFO && !line.empty()) {
+        log::debug("whisper: ", line);
     }
+}
+
+/// The first GPU device ggml was built with (CUDA, Metal, Vulkan, ...), if any.
+const char* ggml_gpu_name() {
+    for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) return ggml_backend_dev_description(dev);
+    }
+    return nullptr;
 }
 
 // Whisper's encoder always sees a 30 s window (1500 positions, 50 per second). Utterances are a
@@ -50,12 +65,20 @@ public:
         }
         whisper_log_set(forward_whisper_log, nullptr);
         whisper_context_params cparams = whisper_context_default_params();
-        // A GPU backend is used only when whisper.cpp was built with one (GGML_CUDA, Metal, ...);
-        // `device: cpu` keeps a GPU build on the CPU.
-        cparams.use_gpu = params.flag("gpu", params.str("device", "auto") != "cpu");
+        // A GPU backend is used only when whisper.cpp was built with one (EE_WHISPER_CUDA,
+        // Metal, ...); `device: cpu` keeps a GPU build on the CPU.
+        const std::string device = params.str("device", "auto");
+        cparams.use_gpu = params.flag("gpu", device != "cpu");
         cparams.gpu_device = static_cast<int>(params.integer("gpu_id", 0));
         ctx_ = whisper_init_from_file_with_params(model_path.c_str(), cparams);
         if (ctx_ == nullptr) throw ConfigError("cannot load whisper model '" + model_path + "'");
+        if (cparams.use_gpu) {
+            if (const char* gpu = ggml_gpu_name()) {
+                log::info("asr: whisper.cpp on ", gpu);
+            } else if (device == "cuda") {
+                log::warn("asr: whisper.cpp was built without a GPU backend (EE_WHISPER_CUDA); using the CPU");
+            }
+        }
         if (params.flag("warmup", true)) {
             // One throwaway decode at load: the first utterance should not pay for first-touch
             // allocations and thread start-up.

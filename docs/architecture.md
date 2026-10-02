@@ -34,7 +34,7 @@ for the real engines.
 
 | Box | Code | Status |
 |---|---|---|
-| 2.1 Streaming ASR: whisper.cpp, LocalAgreement-2, partial + final, word timestamps, language ID | `asr/local_agreement.cpp`, `asr/asr_stage.cpp`, `asr/whisper_engine.cpp` | **done**; scripted **stand-in**; whisper.cpp **adapter** (`EE_WITH_WHISPER`) |
+| 2.1 Streaming ASR: whisper.cpp, LocalAgreement-2, partial + final, word timestamps, language ID | `asr/local_agreement.cpp`, `asr/asr_stage.cpp`, `asr/whisper_engine.cpp` | **done**; scripted **stand-in**; whisper.cpp **adapter** (`EE_WITH_WHISPER`). CUDA backend with `EE_WHISPER_CUDA`: final decode 32–37 ms p50 on jfk.wav, against ~230 ms on the CPU, with identical transcripts |
 | 2.2 Emotion engine: acoustic (emotion2vec), prosody (F0 · energy · rate · jitter), lexical (DistilRoBERTa), gated late fusion, EMA | `emotion/prosody_features.cpp`, `emotion/acoustic.cpp`, `emotion/onnx_acoustic.cpp`, `emotion/lexical.cpp`, `emotion/fusion.cpp`, `emotion/emotion_stage.cpp` | fusion, EMA, prosody features (YIN F0) **done**; emotion2vec+ base and DistilRoBERTa (with a C++ byte-level BPE tokenizer) through ONNX Runtime **done** (phase 2: classifiers mapped to V·A·D by `emotion/class_mapping.cpp`); prosody-rules and lexicon remain as **stand-ins** for builds without ORT |
 
 ### 03 · Understand
@@ -64,7 +64,7 @@ for the real engines.
 
 | Service | Code | Status |
 |---|---|---|
-| Inference runtime: ORT execution providers CPU / CUDA / TensorRT / OpenVINO / CoreML / NNAPI, IOBinding, INT8/FP16 | `runtime/onnx.cpp`; device profiles in `models/manifest.json`; `pipeline.device` in the YAML | CUDA **done** (phase 4, measured on an RTX 5070 Ti): `pipeline.device: auto` puts Kokoro, emotion2vec+, ECAPA and NLLB (CTranslate2 CUDA, INT8/FP16) on the GPU when the build has it, and falls back to the CPU otherwise. Devices can differ per model in one stage (`acoustic_device`, `lexical_device`). Other EPs: **adapter** (selection only). Silero binds its output buffers |
+| Inference runtime: ORT execution providers CPU / CUDA / TensorRT / OpenVINO / CoreML / NNAPI, IOBinding, INT8/FP16 | `runtime/onnx.cpp`; device profiles in `models/manifest.json`; `pipeline.device` in the YAML | CUDA **done** (phase 4, measured on an RTX 5070 Ti): `pipeline.device: auto` puts Kokoro, emotion2vec+, ECAPA, NLLB (CTranslate2 CUDA, INT8/FP16) and whisper.cpp (`EE_WHISPER_CUDA` builds) on the GPU when the build has it, and falls back to the CPU otherwise. Devices can differ per model in one stage (`acoustic_device`, `lexical_device`). Other EPs: **adapter** (selection only). Silero binds its output buffers |
 | Scheduler: thread per stage, core-pinned, lock-free queues + backpressure, drops stale partials, never audio | `runtime/graph.cpp`, `runtime/spsc_queue.hpp`, `runtime/thread_util.cpp` | **done** (deterministic single-thread mode for offline runs and tests) |
 | Telemetry: per-stage p50/p95, RTF, ECS, queue depth, Perfetto trace, Prometheus | `telemetry/*` | **done** |
 | Model registry: SHA-256 verified files, hot-swap per language pair, device profiles | `runtime/model_registry.cpp`, `runtime/sha256.cpp` | **done** |

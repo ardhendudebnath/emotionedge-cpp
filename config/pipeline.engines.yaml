@@ -65,6 +65,8 @@ stages:
     type: asr
     thread: T2-asr
     params:
+      # On the GPU in a build with EE_WHISPER_CUDA (pipeline.device: auto): the final decode takes
+      # ~35 ms instead of ~230 ms on these 4 cores, with the same transcripts.
       engine: whisper
       model_id: asr.whisper.base.q5_1
       language: auto          # automatic language ID
