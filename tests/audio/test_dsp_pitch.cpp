@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 #include "core/audio/dsp.hpp"
 #include "core/audio/pitch.hpp"
 #include "core/audio/speaker.hpp"
 #include "support/signals.hpp"
+#include "support/test_context.hpp"
 
 namespace ee {
 namespace {
@@ -78,6 +81,71 @@ TEST(Speaker, PitchVoicePrintCarriesMedianF0) {
     const auto print = encoder.embed(test::buzz(180.0, 1.0, 16000), 16000);
     EXPECT_NEAR(voice_print_f0(print), 180.0f, 3.0f);
     EXPECT_FLOAT_EQ(voice_print_f0(SpeakerEmbedding{}), 0.0f);
+}
+
+// A voice print along `axis`, optionally tilted toward `other` by `amount`.
+SpeakerEmbedding voice(std::size_t axis, std::size_t other = 0, float amount = 0.0f) {
+    SpeakerEmbedding p{};
+    p[axis] = 1.0f;
+    p[other] += amount;
+    return p;
+}
+
+// Speaker-aware barge-in: the interpreted speaker talking on is not an interruption, nor is the
+// translation's own voice coming back through the microphone; another voice is.
+TEST(VoiceGate, TellsTheSpeakerTheEchoAndOthersApart) {
+    VoiceGate gate({.threshold = 0.35f, .echo_threshold = 0.6f, .min_enrolled = 1});
+    const SpeakerEmbedding speaker = voice(0), other = voice(1), output = voice(2);
+    EXPECT_EQ(gate.judge(speaker), VoiceGate::Verdict::Unknown);  // nobody enrolled yet
+    gate.enroll(speaker);
+    float to_speaker = 0.0f;
+    EXPECT_EQ(gate.judge(voice(0, 1, 0.5f), &to_speaker), VoiceGate::Verdict::Speaker);
+    EXPECT_NEAR(to_speaker, 1.0f / std::sqrt(1.25f), 1e-5f);
+    EXPECT_EQ(gate.judge(other), VoiceGate::Verdict::Other);
+    EXPECT_EQ(gate.judge(output), VoiceGate::Verdict::Other);  // no output heard yet
+    gate.hear_output(output);
+    EXPECT_EQ(gate.judge(output), VoiceGate::Verdict::Echo);
+    EXPECT_EQ(gate.judge(SpeakerEmbedding{}), VoiceGate::Verdict::Unknown);  // too short to embed
+
+    gate.enroll(other);  // another voice's utterance leaves the reference alone
+    EXPECT_EQ(gate.judge(other), VoiceGate::Verdict::Other);
+    EXPECT_EQ(gate.judge(speaker), VoiceGate::Verdict::Speaker);
+}
+
+// A reference from one or two utterances rejects the speaker far more often, so the gate judges
+// nobody until min_enrolled utterances in the speaker's voice are in.
+TEST(VoiceGate, ArmsOnlyOnceTheSpeakerIsEnrolled) {
+    VoiceGate gate({.threshold = 0.25f, .min_enrolled = 3});
+    gate.enroll(voice(0));
+    gate.enroll(voice(1));  // another voice: not enrolled
+    gate.enroll(voice(0, 1, 0.2f));
+    EXPECT_FALSE(gate.has_reference());
+    EXPECT_EQ(gate.judge(voice(1)), VoiceGate::Verdict::Unknown);
+    gate.enroll(voice(0, 2, 0.2f));
+    EXPECT_TRUE(gate.has_reference());
+    EXPECT_EQ(gate.judge(voice(1)), VoiceGate::Verdict::Other);
+    EXPECT_EQ(gate.judge(voice(0)), VoiceGate::Verdict::Speaker);
+}
+
+TEST(VoiceGate, RefinesTheReferenceWithTheSpeakersOwnUtterances) {
+    VoiceGate gate({.threshold = 0.35f, .min_enrolled = 1});
+    gate.enroll(voice(0));
+    const SpeakerEmbedding later = voice(0, 1, 0.75f);  // cos 0.8: the same voice, another day
+    float before = 0.0f, after = 0.0f;
+    (void)gate.judge(later, &before);
+    gate.enroll(later);
+    (void)gate.judge(later, &after);
+    EXPECT_NEAR(before, 0.8f, 1e-5f);
+    EXPECT_GT(after, before);
+    EXPECT_GT(voice_similarity(voice(0), voice(0, 1, 0.75f)), 0.79f);
+    EXPECT_EQ(voice_similarity(voice(0), SpeakerEmbedding{}), 0.0f);
+}
+
+TEST(SpeakerStage, BargeInNeedsVoicePrintsNotPitchStatistics) {
+    test::RecordingContext ctx;
+    ctx.mutable_params().set("barge_in", "true");  // with the default pitch encoder
+    SpeakerStage stage;
+    EXPECT_THROW(stage.open(ctx), ConfigError);
 }
 
 }  // namespace
