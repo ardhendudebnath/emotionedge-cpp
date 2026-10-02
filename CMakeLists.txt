@@ -27,6 +27,7 @@ set(EE_SANITIZE "" CACHE STRING "Sanitizers to enable, e.g. 'address,undefined' 
 # tests build with no native ML dependencies. Each backend adds a real engine adapter.
 option(EE_WITH_ONNXRUNTIME "ONNX Runtime engines: Silero VAD, emotion2vec head" OFF)
 option(EE_WITH_WHISPER "whisper.cpp streaming ASR adapter" OFF)
+option(EE_WHISPER_CUDA "Build whisper.cpp with its CUDA backend (needs the CUDA toolkit; with EE_WITH_WHISPER)" OFF)
 option(EE_WITH_CTRANSLATE2 "CTranslate2 + SentencePiece translation adapter (NLLB-200)" OFF)
 option(EE_WITH_PIPER "Piper TTS adapter (ONNX Runtime + espeak-ng)" OFF)
 option(EE_WITH_MINIAUDIO "miniaudio live capture and playback" OFF)

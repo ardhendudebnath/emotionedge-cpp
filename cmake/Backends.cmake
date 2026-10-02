@@ -41,6 +41,9 @@ if(EE_WITH_WHISPER)
         set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
         set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
         set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+        # ggml's CUDA backend. Set CMAKE_CUDA_ARCHITECTURES (e.g. "native", or 120 for Blackwell)
+        # to compile for your GPU only; ggml's default list takes much longer.
+        set(GGML_CUDA ${EE_WHISPER_CUDA} CACHE BOOL "" FORCE)
         # Keep whisper/ggml static so their option(BUILD_SHARED_LIBS) does not leak into our targets.
         set(BUILD_SHARED_LIBS OFF)
         FetchContent_Declare(whisper
@@ -49,7 +52,7 @@ if(EE_WITH_WHISPER)
         FetchContent_MakeAvailable(whisper)
         # Third-party headers: keep our warning flags (and -Werror) out of them.
         if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
-            foreach(_t whisper ggml ggml-base ggml-cpu)
+            foreach(_t whisper ggml ggml-base ggml-cpu ggml-cuda)
                 if(TARGET ${_t})
                     set_target_properties(${_t} PROPERTIES SYSTEM ON)
                 endif()
