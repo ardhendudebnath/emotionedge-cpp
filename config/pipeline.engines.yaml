@@ -60,6 +60,19 @@ stages:
       encoder: ecapa
       model_id: speaker.ecapa.voxceleb
       threads: 2
+      # Phase 4: speaker-aware barge-in. Speech that starts while the translation plays is
+      # embedded after barge_in_ms. Only a voice unlike the interpreted speaker's cancels the
+      # translation; the speaker talking on and the translation's own echo do not. It arms once
+      # 3 of the speaker's utterances are enrolled. On RAVDESS (24 actors, one studio microphone;
+      # ml/eval/eval_speaker_verification.py), with a 1.5 s probe and a warm reference:
+      # - the speaker is wrongly cut off 1.8% of the time;
+      # - another voice is missed 12.6% of the time (25% for the same gender).
+      # Kokoro's echo scores >= 0.59 against its own voice; people stay <= 0.32 against it.
+      barge_in: true
+      barge_in_ms: 1500
+      barge_in_threshold: 0.25
+      barge_in_enrol: 3
+      echo_threshold: 0.45
 
   - name: asr
     type: asr
@@ -188,7 +201,9 @@ edges:
   - { from: frontend,    to: segmenter, capacity: 256 }
   - { from: segmenter,   to: [asr, emotion, speaker], kinds: [audio], capacity: 512 }
   - { from: segmenter,   to: [tts, playback], kinds: [control] }
-  - { from: speaker,     to: tts, kinds: [voiceprint] }
+  - { from: speaker,     to: tts, kinds: [voiceprint, control] }
+  - { from: speaker,     to: playback, kinds: [control] }        # speaker-aware barge-in
+  - { from: tts,         to: speaker, kinds: [synthaudio], capacity: 256, feedback: true }  # its own voice
   - { from: asr,         to: [emotion, state, translate, recorder], kinds: [transcript] }
   - { from: emotion,     to: state, kinds: [emotion] }
   - { from: state,       to: [translate, recorder], kinds: [utterance] }

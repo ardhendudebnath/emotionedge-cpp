@@ -132,9 +132,10 @@ Phase 3 makes Kokoro-82M the TTS. It costs latency on CPU; the vocoder is 89% of
 - **End to end on jfk.wav:** 1130 ms p50 (Piper: 860 ms).
 - **Keeping it in check:** the first clause is capped at 3 words, and Kokoro's ~0.5 s of silence
   around each clause is trimmed.
-- **Barge-in is off in this config.** It used to cancel the last translation whenever the same
-  speaker kept talking. Translations now queue, and Hindi runs 1.1–1.3× the English, so fast
-  speech builds a playout queue: the "Playout buffer" row.
+- **Barge-in on any speech is off in this config.** It used to cancel the last translation
+  whenever the same speaker kept talking. Translations now queue, and Hindi runs 1.1–1.3× the
+  English, so fast speech builds a playout queue: the "Playout buffer" row. Phase 4 brings
+  barge-in back for other voices only.
 
 Phase 4 runs the neural models on a GPU. The engines config sets `pipeline.device: auto`: whisper,
 Kokoro, emotion2vec+, ECAPA and NLLB then run on CUDA when the build has it, and on the CPU
@@ -184,6 +185,37 @@ each:
   them.
 - **Limit:** the first utterance's length is predicted from the English calibration render,
   which runs about 30% short for Hindi. Later ones use the voice's measured pace.
+
+**Speaker-aware barge-in** (phase 4) lets a listener interrupt the translation, while the
+interpreted speaker can talk on over it. When speech starts while the translation plays, the
+speaker stage embeds its first 1.5 s with ECAPA-TDNN and judges it with a `VoiceGate`:
+- **Another voice** cancels the translation.
+- **The speaker's own voice** does not. The reference print is enrolled from the speaker's
+  utterances and refined by each later one in that voice. The gate arms once 3 are in.
+- **The translation's own voice**, coming back through an open loudspeaker, does not either.
+  Its print comes from the TTS output on a feedback edge.
+
+Measured on RAVDESS (`ml/eval/eval_speaker_verification.py`; 24 actors, all on one studio
+microphone, so a hard case), with a 1.5 s probe and threshold 0.25:
+
+| Speaker reference | Speaker wrongly cut off | Another voice missed (same gender) |
+|---|---|---|
+| warm: 8 earlier utterances | 1.8% | 12.6% (25%) |
+| cold: 3 neutral utterances | 8.3% | 6.9% (14%) |
+
+Echo is told apart cleanly. Kokoro's voice scores ≥ 0.59 against its own print, and people
+score ≤ 0.32 against it. End to end in real time:
+- jfk.wav followed by another man or a woman: JFK talking on over his own translation scores
+  0.71 and does not interrupt, while the newcomer (−0.01, 0.06) does.
+- A simulated speaker echo of the translation scores 0.54–0.55 against the output voice and is
+  ignored.
+- No barge-in fires in the single-speaker runs.
+
+Limits:
+- The interruption takes effect 1.5 s into the new speech. Shorter interjections are judged on
+  what there is, at least 0.5 s.
+- The echo is not interrupted, but it is still transcribed and translated. Echo cancellation
+  (1.2) is not built yet.
 
 To build for CUDA you need three pieces:
 - ONNX Runtime's GPU package;
@@ -267,8 +299,8 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
    and contour, learned per-emotion style offsets, and the ECAPA-TDNN voice print. See
    `ml/README.md` for what transfers: arousal and dominance, not yet valence.
 4. **Closed loop & speed** (in progress). Done: GPU execution (CUDA for whisper.cpp, ORT and
-   CTranslate2, `pipeline.device: auto`) and adaptive pacing of the playout queue. Next:
-   speaker-aware barge-in, an ECS-trained controller and emotion-faithful MT data.
+   CTranslate2, `pipeline.device: auto`), adaptive pacing of the playout queue and speaker-aware
+   barge-in. Next: an ECS-trained controller, emotion-faithful MT data and echo cancellation.
 5. **Ship.** Desktop app, gRPC server, Android and Jetson builds, public benchmark report.
 
 Every phase ends with the P5 quality gate (`ml/eval/quality_gate.py`).

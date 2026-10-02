@@ -171,6 +171,34 @@ differ from the old model's by no more than two runs of the old model differ fro
 (the decoder adds noise): 0.40–0.61 dB against 0.43–0.62 dB mean |log-mel|. CPU time is
 unchanged.
 
+## Speaker-aware barge-in (P4)
+
+`eval/eval_speaker_verification.py` calibrates the speaker stage's `VoiceGate`. The 24 RAVDESS
+actors are recorded in one studio on one microphone, so voices are not told apart by their
+channel. Each actor gets a reference print, built from the first 2 s of each enrolled clip:
+- cold: 3 neutral/calm clips;
+- warm: 8 clips of any emotion.
+
+Probes are the first T s of every other clip, scored by ECAPA cosine. The table gives two
+error rates:
+- false barge-in: the actor's own speech judged another voice;
+- missed: another actor judged the same voice; in brackets, same-gender pairs only.
+
+| probe | reference | EER | at 0.20: false / missed | at 0.25: false / missed |
+|---|---|---|---|---|
+| 1.0 s | cold | 11.1% | 10.9% / 11.3% (20%) | 17.6% / 5.4% (11%) |
+| 1.0 s | warm | 8.0% | 5.0% / 19.7% (35%) | 6.9% / 10.3% (20%) |
+| **1.5 s** | **warm** | 4.2% | 0.9% / 22.7% (41%) | **1.8% / 12.6% (25%)** |
+| 1.5 s | cold | 7.6% | 4.7% / 13.7% (25%) | 8.3% / 6.9% (14%) |
+| 2.0 s | warm | 3.3% | 0.5% / 23.8% (43%) | 0.9% / 13.5% (27%) |
+
+The runtime uses a 1.5 s probe, threshold 0.25, and arms once 3 utterances are enrolled.
+
+- **Errors are not symmetric.** Cutting off the interpreted speaker's own translation is the
+  costly one. Missing a listener's interruption leaves things as they were before barge-in.
+- **Echo of the translation:** Kokoro's voices score ≥ 0.59 (median 0.75) against their own
+  print at 1.5 s, and the actors score ≤ 0.32 against them. Echo threshold 0.45.
+
 ## Setup
 
 The metrics, the gate and the manifest tools use only the standard library:
