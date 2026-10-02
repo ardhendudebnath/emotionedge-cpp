@@ -50,13 +50,13 @@ for the real engines.
 | Box | Code | Status |
 |---|---|---|
 | 4.1 Emotion controller: V·A·D → pitch, range, rate, energy, pauses, voice quality; relative to the target baseline; emphasis boosts; closed-loop correction; 128-d style vector | `prosody/controller.cpp`, `prosody/controller_stage.cpp`, `prosody/style.cpp` | rules v1 + closed loop **done**. For Kokoro, per-emotion offsets in its 256-d style space are learned against an emotion classifier (`ml/train/learn_style_offsets.py`) and applied by V·A·D strength and confidence. The 128-d placeholder anchors remain for other engines |
-| 4.2 Expressive TTS: StyleTTS2 on style vector + voice print, clause chunker, HiFi-GAN 24 kHz, Piper/VITS fallback | `tts/clause_chunker.cpp`, `tts/formant_synth.cpp`, `tts/piper_engine.cpp`, `tts/tts_stage.cpp` | chunker **done** (first clause cappable for slow vocoders). Kokoro-82M (StyleTTS2 family, 24 kHz) **done** (`tts/kokoro_engine.cpp`, `tts/kokoro_g2p.cpp` = misaki's G2P ported to C++): the controller drives its durations, F0 shift, range, accents and final contour. On CUDA a clause takes ~70–95 ms whatever its length. Piper **fallback**; formant **stand-in** |
+| 4.2 Expressive TTS: StyleTTS2 on style vector + voice print, clause chunker, HiFi-GAN 24 kHz, Piper/VITS fallback | `tts/clause_chunker.cpp`, `tts/formant_synth.cpp`, `tts/piper_engine.cpp`, `tts/tts_stage.cpp` | chunker **done** (first clause cappable for slow vocoders). Kokoro-82M (StyleTTS2 family, 24 kHz) **done** (`tts/kokoro_engine.cpp`, `tts/kokoro_g2p.cpp` = misaki's G2P ported to C++): the controller drives its durations, F0 shift, range, accents and final contour. On CUDA a clause takes ~70–95 ms whatever its length. Adaptive pacing **done** (phase 4, `PacingConfig`): an utterance is spoken up to 1.3× faster when it would wait behind earlier audio, or would outlast the speaker's usual gap. Piper **fallback**; formant **stand-in** |
 
 ### 05 · Deliver
 
 | Box | Code | Status |
 |---|---|---|
-| 5.1 Playback: 60 ms jitter buffer, chunk crossfade, AEC reference, source ducking | `audio/playback.cpp`, `pipeline/session.cpp` (`mix_with_ducking`) | **done** |
+| 5.1 Playback: 60 ms jitter buffer, chunk crossfade, AEC reference, source ducking | `audio/playback.cpp`, `pipeline/session.cpp` (`mix_with_ducking`) | **done**; publishes how far playout runs behind (`AudioIo::playout_delay`) for 4.2's pacing |
 | 5.2 Emotion consistency: ECS = 1 − ‖ΔVAD‖/2√3, nudge 4.1 below threshold, log per utterance | `emotion/consistency_stage.cpp`, `telemetry/ecs.hpp` | **done**; with the engines config the output is judged by emotion2vec+ (language-agnostic, one session shared with 2.2) |
 | 5.3 Outputs: speaker, live captions with emotion tags, gRPC/WebSocket, CLI/desktop, WAV + SRT/JSON | `pipeline/recorder.cpp`, `apps/cli` | CLI, WAV, SRT, JSON **done**; gRPC/WebSocket and desktop **planned** (phase 5) |
 

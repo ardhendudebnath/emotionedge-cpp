@@ -47,6 +47,8 @@ private:
     void begin_utterance(const Frame& f);
     void deliver(bool final_chunk);
     void finish_utterance();
+    /// Tells the TTS how far playout runs behind (AudioIo::playout_delay).
+    void publish_backlog();
     void feed_echo_reference(std::span<const float> played);
 
     StageContext* ctx_ = nullptr;
