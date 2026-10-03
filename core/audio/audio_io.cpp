@@ -38,6 +38,8 @@ std::size_t RingSink::pull(std::span<float> out) noexcept {
     if (n < out.size() && streaming_.load(std::memory_order_acquire)) {
         underrun_.fetch_add(out.size() - n, std::memory_order_relaxed);
     }
+    // Silence too: the echo canceller's reference must stay continuous to stay aligned.
+    if (tap_ != nullptr) tap_->write(out);
     return n;
 }
 
@@ -63,10 +65,13 @@ void PacedFeeder::start() {
         set_current_thread_name("T0-feeder");
         set_current_thread_priority(ThreadPriority::Realtime);
         const double block_seconds = static_cast<double>(block_) / target_.sample_rate() / speed_;
+        std::vector<float> block(block_);
         TimePoint next = Clock::now();
         for (std::size_t pos = 0; pos < samples_.size() && !stop_.load(); pos += block_) {
             const std::size_t n = std::min(block_, samples_.size() - pos);
-            target_.push(std::span<const float>(samples_.data() + pos, n));
+            std::copy_n(samples_.data() + pos, n, block.data());
+            if (hook_) hook_(std::span<float>(block.data(), n));
+            target_.push(std::span<const float>(block.data(), n));
             next = add_seconds(next, block_seconds);
             std::this_thread::sleep_until(next);
         }
@@ -95,6 +100,7 @@ void PacedDrain::start() {
         TimePoint next = Clock::now();
         while (!stop_.load()) {
             source_.pull(block);
+            if (hook_) hook_(block);
             recording_.insert(recording_.end(), block.begin(), block.end());
             next = add_seconds(next, block_seconds);
             std::this_thread::sleep_until(next);

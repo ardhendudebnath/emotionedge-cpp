@@ -35,7 +35,16 @@ stages:
     type: frontend
     thread: T1-dsp-vad
     tick_ms: 20
-    params: { frame_ms: 20, agc: { enabled: true, target_dbfs: -23 } }
+    params:
+      frame_ms: 20
+      agc: { enabled: true, target_dbfs: -23 }
+      # Echo cancellation (1.2) slot. None is built in yet: SpeexDSP and WebRTC AEC3 were
+      # measured on a simulated loudspeaker loop, and both left the speaker's voice worse while
+      # the translation played (README, "Echo cancellation"). Use headphones. The reference a
+      # canceller needs (what the device plays, aligned with the microphone) is in place;
+      # `record` captures both for tuning one.
+      echo_canceller: none
+      aec: { reference_slack_ms: 40 }
 
   - name: segmenter
     type: segmenter

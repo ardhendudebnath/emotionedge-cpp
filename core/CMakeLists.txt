@@ -44,6 +44,7 @@ ee_add_module(runtime
 set(EE_AUDIO_SOURCES
     audio/audio_io.cpp
     audio/dsp.cpp
+    audio/echo_sim.cpp
     audio/frontend.cpp
     audio/pitch.cpp
     audio/playback.cpp

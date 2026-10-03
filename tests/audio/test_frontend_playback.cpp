@@ -1,8 +1,15 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <filesystem>
+#include <string>
+
 #include "core/audio/audio_io.hpp"
+#include "core/audio/dsp.hpp"
+#include "core/audio/echo_sim.hpp"
 #include "core/audio/frontend.hpp"
 #include "core/audio/playback.hpp"
+#include "core/audio/wav.hpp"
 #include "support/signals.hpp"
 #include "support/test_context.hpp"
 
@@ -155,6 +162,81 @@ TEST(Playback, PublishesItsBacklogForPacing) {
     // utterance whose source ended at 3.0 s would start 1.15 s after its nominal 3.735 s.
     EXPECT_NEAR(offline.playout_delay(3.0), 1.15, 0.01);
     EXPECT_EQ(offline.playout_delay(10.0), 0.0);
+}
+
+// The echo canceller's reference is what the device plays, when it plays it: silence included,
+// so the reference stays a continuous stream in step with the microphone.
+TEST(RingSink, TapsWhatIsPlayedIncludingSilence) {
+    RingSink sink(24000, 1024);
+    SpscRing<float> tap(4096);
+    sink.set_played_tap(&tap);
+    const std::vector<float> audio(100, 0.5f);
+    ASSERT_EQ(sink.write(audio), 100u);
+    std::vector<float> out(160);
+    EXPECT_EQ(sink.pull(out), 100u);
+    std::vector<float> played(tap.read_available());
+    ASSERT_EQ(tap.read(played), 160u);
+    EXPECT_EQ(played[99], 0.5f);
+    EXPECT_EQ(played[100], 0.0f);  // the underrun's zero padding is played too
+}
+
+// A played impulse comes back as the room's impulse response, after the delay and at the gain.
+TEST(EchoSimulator, PlaysTheRoomResponseBackAfterTheDelay) {
+    EchoSimulator room({.gain_db = -6.0f, .delay_ms = 10.0f, .rt60_ms = 50.0f, .drive = 0.0f}, 16000, 16000);
+    std::vector<float> impulse(160, 0.0f);
+    impulse[0] = 1.0f;
+    room.played(impulse);
+    std::vector<float> mic(1600, 0.0f);
+    room.add_to(mic);
+    const auto& h = room.impulse_response();
+    ASSERT_EQ(h.size(), 800u);  // 50 ms at 16 kHz
+    const float gain = db_to_gain(-6.0f);
+    for (std::size_t i = 0; i < 160; ++i) EXPECT_EQ(mic[i], 0.0f);  // nothing before the delay
+    for (std::size_t k = 0; k < h.size(); k += 37) EXPECT_NEAR(mic[160 + k], gain * h[k], 1e-6f) << k;
+}
+
+// The front end pairs microphone block k with what played during block k (the echo canceller's
+// reference, recorded with `record`). A reference block that arrives late is replaced by
+// silence and skipped when it comes, so the pairing does not drift.
+TEST(Frontend, AlignsThePlayedReferenceWithTheMicrophone) {
+    constexpr int kRate = 16000;
+    constexpr std::size_t kBlock = 320;  // 20 ms
+    BufferSource source(std::vector<float>(kRate, 0.0f), kRate);  // 1 s: 50 blocks
+    RingSink sink(kRate, 4096);  // its rate is the reference's: no resampling here
+    SpscRing<float> tap(kRate);
+    AudioIo io;
+    io.capture = &source;
+    io.playback = &sink;
+    io.echo_reference = &tap;
+    test::RecordingContext ctx;
+    ctx.mutable_pipeline().sample_rate = kRate;
+    ctx.services().audio = &io;
+    ctx.mutable_params().set("agc.enabled", "false");
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() /
+                                      ("ee_frontend_ref_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
+    std::filesystem::create_directories(dir);
+    ctx.mutable_params().set("record", (dir / "run").string());
+    FrontendStage stage;
+    stage.open(ctx);
+
+    // Played block k holds the value (k + 1) / 100. Block 10 reaches the tap one block late.
+    const auto play = [&](int k) { tap.write(std::vector<float>(kBlock, 0.01f * static_cast<float>(k + 1))); };
+    for (int k = 0; k < 60 && !ctx.finished; ++k) {
+        if (k == 11) play(10);
+        if (k != 10) play(k);
+        stage.tick();
+    }
+    ASSERT_TRUE(ctx.finished);
+    stage.close();
+
+    const WavData ref = read_wav(dir / "run_ref.wav");
+    std::filesystem::remove_all(dir);
+    ASSERT_EQ(ref.samples.size(), static_cast<std::size_t>(kRate));
+    for (std::size_t k = 0; k < 50; ++k) {
+        const float expected = k == 10 ? 0.0f : 0.01f * static_cast<float>(k + 1);
+        EXPECT_NEAR(ref.samples[k * kBlock], expected, 1e-3f) << "block " << k;
+        EXPECT_NEAR(ref.samples[k * kBlock + kBlock - 1], expected, 1e-3f) << "block " << k;
+    }
 }
 
 }  // namespace

@@ -83,7 +83,8 @@ SessionResult Session::run() {
     case RunMode::Realtime: {
         RingSource source(input_rate, static_cast<std::size_t>(input_rate) * 10);
         RingSink sink(options_.output_rate, static_cast<std::size_t>(options_.output_rate) * 30);
-        SpscRing<float> echo(static_cast<std::size_t>(spec_.sample_rate) * 2);
+        SpscRing<float> echo(static_cast<std::size_t>(options_.output_rate) * 2);
+        sink.set_played_tap(&echo);
         AudioIo io;
         io.capture = &source;
         io.playback = &sink;
@@ -92,6 +93,12 @@ SessionResult Session::run() {
         Graph graph(spec_, registry, services);
         PacedFeeder feeder(source, input, options_.speed, static_cast<std::size_t>(input_rate / 100));
         PacedDrain drain(sink, options_.speed, static_cast<std::size_t>(options_.output_rate / 100));
+        std::unique_ptr<EchoSimulator> room;
+        if (options_.echo_sim) {
+            room = std::make_unique<EchoSimulator>(*options_.echo_sim, options_.output_rate, input_rate);
+            drain.set_play_hook([r = room.get()](std::span<const float> played) { r->played(played); });
+            feeder.set_capture_hook([r = room.get()](std::span<float> captured) { r->add_to(captured); });
+        }
         graph.start();
         drain.start();
         feeder.start();

@@ -13,7 +13,17 @@ emotionedge say --engine piper --model-id tts.piper.en_US.lessac.medium --text "
                                       # test input for real ASR: '|' separates utterances (--gap seconds)
 emotionedge models verify             # SHA-256 check of models/manifest.json
 emotionedge stages                    # registered stage types
+emotionedge run --input speech.wav --config config/pipeline.engines.yaml --realtime --echo-sim -6 \
+    --set frontend.record=out/echo/run   # what an open loudspeaker would do, recorded
 ```
+
+Echo (front end, 1.2):
+- `--echo-sim DB` (with `--realtime`) feeds what is played back into the input through a
+  simulated loudspeaker and room: soft clipping, `--echo-rt60-ms` of reverberation (250) and
+  `--echo-delay-ms` of delay (40).
+- `--set frontend.record=PREFIX` writes what the pipeline hears (`PREFIX_mic.wav`, 16 kHz). When
+  audio plays, it also writes what played, aligned sample by sample with the microphone
+  (`PREFIX_ref.wav`): the input an echo canceller works from.
 
 Outputs go to `--out DIR` (default `out/<command>`):
 

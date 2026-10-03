@@ -72,10 +72,12 @@ std::unique_ptr<INoiseSuppressor> make_noise_suppressor(std::string_view name) {
                       "' is not built in (RNNoise lands with the front-end DSP milestone; use 'none')");
 }
 
-std::unique_ptr<IEchoCanceller> make_echo_canceller(std::string_view name) {
+std::unique_ptr<IEchoCanceller> make_echo_canceller(std::string_view name, const Params& params, int sample_rate) {
+    (void)params;
+    (void)sample_rate;
     if (name.empty() || name == "none") return nullptr;
-    throw ConfigError("echo canceller '" + std::string(name) +
-                      "' is not built in (WebRTC AEC3 lands with the front-end DSP milestone; use 'none')");
+    // SpeexDSP and WebRTC AEC3 were measured and not adopted: README, "Echo cancellation".
+    throw ConfigError("echo canceller '" + std::string(name) + "' is not built in (use 'none')");
 }
 
 }  // namespace ee

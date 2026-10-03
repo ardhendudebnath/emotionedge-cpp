@@ -67,6 +67,9 @@ options:
   --out DIR            where outputs go (default: out/<command>)
   --realtime           threaded run with real-time pacing instead of offline
   --speed X            pacing speed for --realtime (default 1)
+  --echo-sim DB        --realtime: feed what is played back into the input through a simulated
+                       loudspeaker and room, DB relative to the playback (e.g. -6); also
+                       --echo-delay-ms MS (40) and --echo-rt60-ms MS (250)
   --mix-source-db DB   also write mix.wav: the original under the translation, ducked
   --trace              write a Perfetto/Chrome trace (trace.json)
   --log LEVEL          debug | info | warn | error
@@ -202,6 +205,14 @@ SessionOptions base_options(const Args& args, const fs::path& out) {
     opts.overrides.emplace_back("telemetry.prometheus", abs_path(out / "metrics.prom"));
     if (args.has("trace")) opts.overrides.emplace_back("telemetry.trace", abs_path(out / "trace.json"));
     if (args.has("target")) opts.overrides.emplace_back("pipeline.target_language", args.get("target"));
+    if (args.has("echo-sim")) {
+        if (opts.mode != RunMode::Realtime) throw std::runtime_error("--echo-sim needs --realtime");
+        EchoSimulator::Config room;
+        room.gain_db = std::stof(args.get("echo-sim"));
+        if (args.has("echo-delay-ms")) room.delay_ms = std::stof(args.get("echo-delay-ms"));
+        if (args.has("echo-rt60-ms")) room.rt60_ms = std::stof(args.get("echo-rt60-ms"));
+        opts.echo_sim = room;
+    }
     for (const auto& kv : args.sets) opts.overrides.push_back(kv);
     return opts;
 }
@@ -274,7 +285,8 @@ int cmd_live(const Args& args) {
     fs::create_directories(out);
     RingSource capture(16000, 16000 * 10);
     RingSink playback(24000, 24000 * 10);
-    SpscRing<float> echo(32000);
+    SpscRing<float> echo(24000 * 2);  // what the speaker plays: the echo canceller's reference
+    playback.set_played_tap(&echo);
     AudioIo io;
     io.capture = &capture;
     io.playback = &playback;

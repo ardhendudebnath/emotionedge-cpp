@@ -6,6 +6,8 @@
 #include <span>
 #include <string_view>
 
+#include "core/runtime/params.hpp"
+
 namespace ee {
 
 [[nodiscard]] inline float db_to_gain(float db) { return std::pow(10.0f, db / 20.0f); }
@@ -56,8 +58,9 @@ public:
     virtual void process(std::span<float> block) = 0;
 };
 
-/// Echo cancellation slot (WebRTC AEC3 in the blueprint): removes our own TTS, whose
-/// playback reference arrives from 5.1, from the microphone signal. In place, 16 kHz.
+/// Echo cancellation slot (WebRTC AEC3 in the blueprint): removes our own TTS, whose playback
+/// reference is tapped where the device plays it (5.1), from the microphone signal. In place;
+/// `reference` is time-aligned with `mic`, same rate and length.
 class IEchoCanceller {
 public:
     virtual ~IEchoCanceller() = default;
@@ -66,6 +69,9 @@ public:
 
 /// "none" returns nullptr (pass-through). Throws ConfigError for engines not built in.
 [[nodiscard]] std::unique_ptr<INoiseSuppressor> make_noise_suppressor(std::string_view name);
-[[nodiscard]] std::unique_ptr<IEchoCanceller> make_echo_canceller(std::string_view name);
+/// Only "none" so far (README, "Echo cancellation"). `params` are the canceller's own (the
+/// front end's `aec.*`).
+[[nodiscard]] std::unique_ptr<IEchoCanceller> make_echo_canceller(std::string_view name, const Params& params,
+                                                                  int sample_rate);
 
 }  // namespace ee

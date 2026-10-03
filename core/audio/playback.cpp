@@ -66,9 +66,6 @@ void PlaybackStage::open(StageContext& ctx) {
     offline_latency_s_ = p.number("offline_latency_ms", 735.0) / 1000.0;
     gap_s_ = p.number("gap_ms", 150.0) / 1000.0;
     joiner_ = std::make_unique<ChunkJoiner>(static_cast<std::size_t>(out_rate_ * p.integer("crossfade_ms", 5) / 1000));
-    if (mode_ == Mode::Live && io_->echo_reference != nullptr) {
-        echo_resampler_ = std::make_unique<Resampler>(out_rate_, ctx.pipeline().sample_rate);
-    }
     if (io_ != nullptr) {
         io_->playout_queued_s.store(0.0);
         io_->playout_free_at_s.store(-1e9);
@@ -166,7 +163,6 @@ void PlaybackStage::deliver(bool final_chunk) {
             if (accepted > 0) {
                 io_->playback_active.store(true);
                 io_->playback->set_streaming(true);
-                feed_echo_reference(std::span<const float>(ready_.data(), accepted));
                 if (!first_audio_marked_) {
                     // Playout starts once the samples already queued ahead of ours have played.
                     const std::size_t queued = io_->playback->queued();
@@ -204,13 +200,6 @@ void PlaybackStage::finish_utterance() {
     out.out_start = mode_ == Mode::Offline ? out_start_ : src_end_;
     out.out_end = out.out_start + static_cast<double>(written_) / out_rate_;
     ctx_->emit(out);
-}
-
-void PlaybackStage::feed_echo_reference(std::span<const float> played) {
-    if (!echo_resampler_ || io_->echo_reference == nullptr) return;
-    echo_.clear();
-    echo_resampler_->process(played, echo_);
-    io_->echo_reference->write(echo_);  // the front-end drains it; overflow just drops reference
 }
 
 void PlaybackStage::tick() {
