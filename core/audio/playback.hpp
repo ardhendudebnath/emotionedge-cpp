@@ -30,8 +30,9 @@ private:
 };
 
 /// Stage 5.1 "Playback". Live mode keeps a jitter buffer (60 ms by default) before an
-/// utterance starts, writes to AudioIo::playback, feeds the played signal back to the AEC as
-/// its reference and raises `playback_active` for barge-in. Offline mode places each utterance
+/// utterance starts, writes to AudioIo::playback and raises `playback_active` for barge-in.
+/// (The echo canceller's reference is tapped where the device plays, RingSink::set_played_tap,
+/// not here: audio written here can wait seconds in the queue before it sounds.) Offline mode places each utterance
 /// on AudioIo::timeline where it would have played live: after the source speech ended plus the
 /// nominal pipeline latency, never overlapping the previous utterance. Emits a Playout frame
 /// per utterance for captions.
@@ -49,7 +50,6 @@ private:
     void finish_utterance();
     /// Tells the TTS how far playout runs behind (AudioIo::playout_delay).
     void publish_backlog();
-    void feed_echo_reference(std::span<const float> played);
 
     StageContext* ctx_ = nullptr;
     AudioIo* io_ = nullptr;
@@ -60,10 +60,8 @@ private:
     double gap_s_ = 0.15;
     std::unique_ptr<ChunkJoiner> joiner_;
     std::unique_ptr<Resampler> resampler_;
-    std::unique_ptr<Resampler> echo_resampler_;
     std::vector<float> converted_;
     std::vector<float> ready_;
-    std::vector<float> echo_;
 
     std::uint64_t utterance_ = 0;
     std::uint64_t cancel_before_ = 0;

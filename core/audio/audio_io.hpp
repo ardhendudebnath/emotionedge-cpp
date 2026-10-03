@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <thread>
 #include <vector>
@@ -83,7 +84,11 @@ class RingSink final : public IAudioSink {
 public:
     RingSink(int sample_rate, std::size_t capacity);
     /// Consumer (T0): fills `out`, zero-padding on underrun; returns the samples actually played.
+    /// Everything handed to the device, silence included, also goes to the played tap.
     std::size_t pull(std::span<float> out) noexcept;
+    /// Records what is played, as it is played: the echo canceller's reference (AudioIo::
+    /// echo_reference). Set before playback starts; overflow drops reference, never blocks.
+    void set_played_tap(SpscRing<float>* tap) noexcept { tap_ = tap; }
 
     [[nodiscard]] int sample_rate() const noexcept override { return rate_; }
     std::size_t write(std::span<const float> samples) override { return ring_.write(samples); }
@@ -95,6 +100,7 @@ public:
 private:
     SpscRing<float> ring_;
     int rate_;
+    SpscRing<float>* tap_ = nullptr;
     std::atomic<bool> flush_requested_{false};
     std::atomic<bool> streaming_{false};
     std::atomic<std::uint64_t> underrun_{0};
@@ -121,7 +127,9 @@ struct AudioIo {
     IAudioSource* capture = nullptr;             ///< front-end input
     IAudioSink* playback = nullptr;              ///< live playout
     TimelineSink* timeline = nullptr;            ///< offline playout
-    SpscRing<float>* echo_reference = nullptr;   ///< played audio at 16 kHz, for the AEC (1.2)
+    /// What the loudspeaker plays, at the playback rate, written as it is played (a
+    /// RingSink::set_played_tap): the echo canceller's reference (1.2).
+    SpscRing<float>* echo_reference = nullptr;
     std::atomic<bool> playback_active{false};    ///< translated speech is playing (barge-in)
 
     // How far the translation runs behind, for the TTS's adaptive pacing (4.2). Playback (5.1)
@@ -148,6 +156,9 @@ public:
     PacedFeeder(const PacedFeeder&) = delete;
     PacedFeeder& operator=(const PacedFeeder&) = delete;
 
+    /// Called on each block before it is captured (e.g. EchoSimulator::add_to). Set before start().
+    void set_capture_hook(std::function<void(std::span<float>)> hook) { hook_ = std::move(hook); }
+
     void start();
     void stop();
     [[nodiscard]] bool done() const noexcept { return done_.load(); }
@@ -157,6 +168,7 @@ private:
     std::vector<float> samples_;
     double speed_;
     std::size_t block_;
+    std::function<void(std::span<float>)> hook_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> done_{false};
@@ -171,6 +183,9 @@ public:
     PacedDrain(const PacedDrain&) = delete;
     PacedDrain& operator=(const PacedDrain&) = delete;
 
+    /// Called with each block as it is played (e.g. EchoSimulator::played). Set before start().
+    void set_play_hook(std::function<void(std::span<const float>)> hook) { hook_ = std::move(hook); }
+
     void start();
     void stop();
     /// Only valid after stop().
@@ -180,6 +195,7 @@ private:
     RingSink& source_;
     double speed_;
     std::size_t block_;
+    std::function<void(std::span<const float>)> hook_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::vector<float> recording_;

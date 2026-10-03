@@ -4,11 +4,13 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "core/audio/audio_io.hpp"
+#include "core/audio/echo_sim.hpp"
 #include "core/pipeline/recorder.hpp"
 #include "core/runtime/config.hpp"
 #include "core/telemetry/telemetry.hpp"
@@ -31,6 +33,9 @@ struct SessionOptions {
     std::vector<float> input_samples;
     int input_rate = 0;
     double speed = 1.0;  ///< Realtime pacing (1 = real time)
+    /// Realtime: what is played comes back into the input through a simulated loudspeaker and
+    /// room, as with an open speaker next to the microphone (exercises the echo canceller).
+    std::optional<EchoSimulator::Config> echo_sim;
 
     AudioIo* live_io = nullptr;  ///< Live mode: capture/playback wired to devices by the caller
 

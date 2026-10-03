@@ -217,6 +217,38 @@ Limits:
 - The echo is not interrupted, but it is still transcribed and translated. Echo cancellation
   (1.2) is not built yet.
 
+**Echo cancellation** (1.2) is open. Use headphones. On an open loudspeaker the translation
+comes back into the microphone, gets transcribed and translated again, and garbles the
+speaker's next words. Two cancellers were measured on a simulated loudspeaker → room →
+microphone loop (`--echo-sim -6`: -6 dB, 40 ms, 250 ms reverberation, a soft-clipping speaker),
+in real time on jfk.wav. Neither was adopted:
+
+| Run (2 each) | "Ask not!" / "what your country can do for you!" | Echo removed | Speaker over the translation |
+|---|---|---|---|
+| headphones, no canceller | correct | – | – |
+| headphones, WebRTC AEC3 on | broken ("¡Mira!", "Doc!") | – | clean → -2 dB signal-to-residual |
+| loudspeaker, no canceller | garbled ("After 9 my American son…") | – | – |
+| loudspeaker, WebRTC AEC3 | fragmented ("Etc!", "You!") | 8.6–14.7 dB | +0.6 → -1.4 to -2.6 dB |
+| loudspeaker, SpeexDSP | one garbled | 4 dB | -0.4 → -3.9 dB |
+
+What the runs show:
+- **AEC3 works on clean signals.** On synthetic echoes of the same speech, offline, it removed
+  48–74 dB.
+- **In this use it fails.** The speaker talks over the translation all the time, and AEC3
+  attenuates them whenever the translation plays, even with no echo at all. Lowering its
+  initial echo-path assumption needs an AEC3 configuration that webrtc-audio-processing 1.3
+  does not expose.
+- **The echo delay still jumps.** The reference was late 4–13 times per run.
+
+What landed:
+- **The reference.** It used to be taken when audio was queued for playback, up to seconds
+  before it sounded. It is now what the device plays (`RingSink::set_played_tap`), consumed in
+  lockstep with the microphone; a late block is replaced by silence and skipped when it comes.
+- **The test loop.** `--echo-sim` simulates the loudspeaker in real-time runs, and
+  `frontend.record` saves the microphone with the aligned reference. That is the data a
+  canceller is tuned on.
+- **Real hardware is the next test.** A canceller still has to be tuned there.
+
 To build for CUDA you need three pieces:
 - ONNX Runtime's GPU package;
 - a CTranslate2 built with `-DWITH_CUDA=ON -DWITH_CUDNN=ON`;
