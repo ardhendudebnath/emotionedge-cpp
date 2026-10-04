@@ -1,5 +1,9 @@
 #include "core/prosody/controller_stage.hpp"
 
+#include <filesystem>
+
+#include "core/runtime/log.hpp"
+#include "core/runtime/model_registry.hpp"
 #include "core/telemetry/telemetry.hpp"
 
 namespace ee {
@@ -8,6 +12,21 @@ void EmotionControllerStage::open(StageContext& ctx) {
     ctx_ = &ctx;
     const Params& p = ctx.params();
     controller_ = EmotionController(ControllerConfig::from(p));
+    // A learned plan travels with the TTS voice it was learned on (plan_model / plan_model_id,
+    // e.g. the Kokoro voice directory, holding plan_file). learned_plan: false keeps the rules;
+    // plan_emotions limits it to the emotions that also held up end to end.
+    if (const std::string dir = p.flag("learned_plan", true) ? resolve_model_path(p, ctx.services().models, "plan_model")
+                                                              : std::string();
+        !dir.empty()) {
+        const std::filesystem::path file = std::filesystem::path(dir) / p.str("plan_file", "prosody_controller.json");
+        if (std::filesystem::exists(file)) {
+            LearnedProsody learned = LearnedProsody::load(file, p.list("plan_emotions"));
+            log::info("controller: learned prosody plan for ", learned.controls.size(), " emotion(s) from ", file.string());
+            controller_.set_learned(std::move(learned));
+        } else {
+            log::warn("controller: no learned prosody plan at ", file.string(), "; using the rules");
+        }
+    }
     if (const std::string path = p.str("expressivity"); !path.empty()) profiles_ = ExpressivityProfiles::load(path);
     if (const std::string path = p.str("style_anchors"); !path.empty()) styles_ = StyleBank::load(path);
     style_temperature_ = p.real("style_temperature", style_temperature_);

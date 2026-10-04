@@ -249,6 +249,36 @@ What landed:
   canceller is tuned on.
 - **Real hardware is the next test.** A canceller still has to be tuned there.
 
+**Learned prosody plan** (phase 4, the blueprint's ECS-trained controller). For sadness, the
+controller's rate, pitch, range and final contour for Kokoro come from a search against the
+consistency judge (`ml/train/learn_controller.py`). The other emotions keep rules v1.
+
+The plan is tuned at the strengths the controller applies it: it scales a plan by how far the
+detected emotion reaches toward its prototype, about 0.7 on RAVDESS. A plan tuned at full
+strength alone passed every offline check, but turned every sad clause into fear in the
+pipeline.
+
+An emotion must pass three checks:
+- an independent judge agrees on held-out sentences;
+- Whisper CER holds;
+- end to end on RAVDESS, it gains over run-to-run noise.
+
+Over 4 runs each, on the clauses read as sad:
+
+| | Valence | Arousal | Dominance | ECS on sad clips |
+|---|---|---|---|---|
+| rules | +0.06 … +0.10 | 0.16 … 0.27 | −0.02 … −0.03 | 0.811–0.822 |
+| learned | −0.15 … −0.30 | 0.20 … 0.28 | −0.23 … −0.32 | 0.816–0.834 |
+
+- **Sadness:** valence and dominance now move toward the emotion, which the style offsets alone
+  never managed. Arousal does not drop, so the judge mostly labels these clauses fear, not
+  sadness.
+- **Joy and surprise:** they passed offline, but end to end neither changed beyond run-to-run
+  noise, so `plan_emotions` leaves them on the rules.
+- **Off switch:** `--set controller.learned_plan=false` brings back the rules.
+
+`ml/README.md` has the full tables.
+
 To build for CUDA you need three pieces:
 - ONNX Runtime's GPU package;
 - a CTranslate2 built with `-DWITH_CUDA=ON -DWITH_CUDNN=ON`;
@@ -331,8 +361,10 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
    and contour, learned per-emotion style offsets, and the ECAPA-TDNN voice print. See
    `ml/README.md` for what transfers: arousal and dominance, not yet valence.
 4. **Closed loop & speed** (in progress). Done: GPU execution (CUDA for whisper.cpp, ORT and
-   CTranslate2, `pipeline.device: auto`), adaptive pacing of the playout queue and speaker-aware
-   barge-in. Next: an ECS-trained controller, emotion-faithful MT data and echo cancellation.
+   CTranslate2, `pipeline.device: auto`), adaptive pacing of the playout queue, speaker-aware
+   barge-in, the echo path's test loop, and a learned prosody plan for sadness.
+   Next: emotion-faithful MT data, an echo canceller tuned on real hardware, and a plan that
+   lowers arousal for sadness.
 5. **Ship.** Desktop app, gRPC server, Android and Jetson builds, public benchmark report.
 
 Every phase ends with the P5 quality gate (`ml/eval/quality_gate.py`).

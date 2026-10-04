@@ -171,6 +171,75 @@ differ from the old model's by no more than two runs of the old model differ fro
 (the decoder adds noise): 0.40–0.61 dB against 0.43–0.62 dB mean |log-mel|. CPU time is
 unchanged.
 
+## Learned prosody plan (P4, "ECS-trained controller")
+
+`train/learn_controller.py` searches, per emotion, the four prosody controls that reach Kokoro:
+- speaking rate;
+- pitch shift;
+- pitch range;
+- final contour.
+
+The values are on top of the shipped style offsets. The runtime rarely applies them in full:
+like the offsets, a plan is scaled by how far the target reaches toward the emotion's
+prototype, gated by confidence. That is about 0.7 on RAVDESS. So every candidate is rendered at
+strengths 0.7 and 1.0.
+
+The objective is the runtime consistency judge's (emotion2vec+) probability of the emotion, on
+8 sentences × 4 voices × both strengths, minus a Whisper-loss penalty for lost
+intelligibility. Rendering rounds durations, so the search is a derivative-free pattern search
+started from the rules' values, inside speed ≤ 1.3. An emotion adopts the learned values only
+where three checks pass on 12 held-out sentences × 4 voices, at both strengths:
+- the consistency judge hears it better;
+- an independent V·A·D model (audeering) also hears it closer to the emotion;
+- Whisper's median CER holds within 0.02.
+
+Held-out, at strength 0.7 / 1.0:
+
+| emotion | consistency judge P | independent shift toward the prototype | median CER | held-out checks |
+|---|---|---|---|---|
+| anger | 0.10 → 0.13 / 0.50 → 0.77 | +0.14 → **+0.06** / +0.20 → **+0.08** | 0.179 → 0.163 / 0.170 → 0.176 | fail: fools the training judge |
+| joy | 0.39 → 0.43 / 0.78 → 0.84 | +0.12 → +0.15 / +0.18 → +0.22 | 0.159 → 0.170 / 0.161 → 0.167 | pass |
+| **sadness** | **0.08 → 0.53** / 0.51 → 0.79 | +0.21 → +0.27 / +0.26 → +0.39 | 0.179 → 0.185 / 0.200 → 0.191 | pass |
+| fear | 0 → 0 | no change | – | no change found |
+| surprise | 0.03 → 0.08 / 0.04 → 0.11 | +0.06 → +0.13 / +0.08 → +0.17 | 0.170 → 0.167 / 0.167 → 0.167 | pass |
+
+The learned values at full strength:
+- sadness: the rules' speed (0.94), pitch +1.4 st, range 0.5, a rising end;
+- joy: speed 0.97, +4 st, range 1.5, a falling end;
+- surprise: speed 1.1, +4 st, range 2.0, a rising end.
+
+**End to end** is the last check. The 48 RAVDESS clips are run through the engines pipeline
+with and without the plan, 4 runs each. The consistency stage judges every output clause.
+
+| clauses read as sad (6 per run) | rules | learned |
+|---|---|---|
+| output valence | +0.06 … +0.10 | **−0.15 … −0.30** |
+| output arousal | 0.16 … 0.27 | 0.20 … 0.28 |
+| output dominance | −0.02 … −0.03 | **−0.23 … −0.32** |
+| heard as sadness / fear / neutral (last 2 runs) | 0 / 0 / 4–5 | 1 / 2–3 / 2 |
+
+- **Sadness** gains in V·A·D. Its ECS over all sad clips rises from 0.811–0.822 to
+  0.816–0.834, and the share of output clauses heard as non-neutral from 0.20–0.24 to
+  0.24–0.28. Arousal does not fall, though, so the label mostly becomes fear, not sadness: the
+  plan moves valence and dominance, but not yet arousal.
+- **Surprise** changes nothing measurable; the judge hears neutral either way.
+- **Joy** shows no gain. Its ECS was 0.779–0.794 with its plan and 0.785–0.825 without, but
+  identical configurations differ by up to 0.024 between runs.
+- Label agreement and the input/output arousal CCC stay within run-to-run noise. On the clauses
+  the plan touches, the CCC is −0.16 in both arms.
+
+So `config/pipeline.engines.yaml` applies the plan only to sadness (`plan_emotions`), the one
+emotion that gained beyond noise. The runs above applied it to sadness and surprise, or to all
+three; the plans act per emotion, and the sadness rows agree across both.
+
+The first search only scored full strength, and its sadness plan failed end to end. On held-out
+sentences it raised P(sad) from 0.51 to 0.73, and the independent judge agreed. But at 0.7 the
+judge heard fear about as often as sadness. In the pipeline, all 6 sad clauses came out as fear,
+with arousal +0.50.
+
+Anger is the opposite case to sadness. The consistency judge liked a low, flat voice that the
+independent judge heard as less aroused, so it keeps the rules.
+
 ## Speaker-aware barge-in (P4)
 
 `eval/eval_speaker_verification.py` calibrates the speaker stage's `VoiceGate`. The 24 RAVDESS

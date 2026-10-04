@@ -145,6 +145,15 @@ stages:
     thread: T4-understand
     params:
       expressivity: ${config_dir}/expressivity.yaml
+      # Phase 4: the learned prosody plan for the Kokoro voice (ml/train/learn_controller.py,
+      # prosody_controller.json in its directory) replaces the rules' rate, pitch, range and
+      # contour for some emotions. It adopted joy, sadness and surprise: on held-out sentences
+      # both the consistency judge and an independent one heard them better, at the runtime's
+      # strengths. End to end on RAVDESS (ml/README.md), only sadness gained beyond run-to-run
+      # noise: ECS rose, valence and dominance moved toward it, arousal did not. Joy and surprise
+      # keep the rules. learned_plan: false = the rules throughout.
+      plan_model_id: tts.kokoro.82m.hi
+      plan_emotions: [sadness]
 
   - name: tts
     type: tts
