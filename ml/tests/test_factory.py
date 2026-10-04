@@ -150,6 +150,25 @@ class ControlPrefixTest(unittest.TestCase):
         self.assertEqual(finetune_nllb_lora.control_prefix("neutral", -0.04, "formal"), "<emo=neutral a=0.0 reg=formal>")
 
 
+class ControllerSearchTest(unittest.TestCase):
+    def test_rules_and_strengths_match_the_cpp_controller(self):
+        import learn_controller as lc
+
+        # tests/prosody/test_controller.cpp: the blueprint walkthrough plan for anger in Hindi,
+        # "pitch +15%  range +30%  rate +10%", and a falling end for its dominance.
+        r = lc.rules(es.PROTOTYPES["anger"])
+        self.assertAlmostEqual((r["speed"] - 1) * 100, 10.0, delta=0.5)
+        self.assertAlmostEqual((2 ** (r["pitch_st"] / 12) - 1) * 100, 15.0, delta=1.0)
+        self.assertAlmostEqual((r["range"] - 1) * 100, 30.0, delta=1.0)
+        self.assertAlmostEqual(r["fall"], 0.55)
+        # A learned plan at 60% strength: 60% of each change (the C++ test's sadness case).
+        part = lc.scaled({"speed": 0.8, "pitch_st": 1.5, "range": 0.9, "fall": 0.4}, 0.6)
+        self.assertAlmostEqual((part["speed"] - 1) * 100, -12.0)
+        self.assertAlmostEqual(part["fall"], 0.24)
+        self.assertEqual(lc.rules_at("sadness", 1.0), lc.clamp(lc.rules(es.PROTOTYPES["sadness"])))
+        self.assertEqual(lc.scaled(r, 0.0), lc.NEUTRAL)
+
+
 class MtCorpusTest(unittest.TestCase):
     def test_cleaning_filters_and_label_coverage(self):
         from data import build_mt_corpus as corpus

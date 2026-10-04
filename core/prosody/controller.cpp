@@ -1,7 +1,12 @@
 #include "core/prosody/controller.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <string>
+#include <vector>
 
 namespace ee {
 
@@ -52,7 +57,46 @@ ProsodyTargets EmotionController::plan(Vad target, float confidence, const Expre
     // Emphasis spans: local pitch accent and a 60-100 ms pre-pause, stronger when aroused.
     t.accent = 1.1f + 0.4f * pos_a;
     t.pause_ms = std::clamp(60.0f + 40.0f * pos_a * (1.0f - 0.5f * pos_d), 60.0f, 100.0f);
+
+    // A learned plan for this emotion replaces the rules' rate, pitch, range and contour.
+    const EmotionLabel label = nearest_label(target);
+    if (const auto it = learned_.controls.find(label); it != learned_.controls.end()) {
+        const Vad proto = prototype(label);
+        const float proto_sq = proto.v * proto.v + proto.a * proto.a + proto.d * proto.d;
+        const float along = proto_sq > 0.0f ? (target.v * proto.v + target.a * proto.a + target.d * proto.d) / proto_sq : 0.0f;
+        const float k = std::clamp(along, 0.0f, 1.25f) * strength(confidence) * profile.intensity;
+        const LearnedProsody::Controls& c = it->second;
+        t.rate_pct = (k * (c.speed - 1.0f)) * 100.0f;
+        t.pitch_pct = (std::pow(2.0f, k * c.pitch_st / 12.0f) - 1.0f) * 100.0f;
+        t.range_pct = (k * (c.range - 1.0f)) * 100.0f;
+        t.final_fall = std::clamp(k * c.fall, -1.0f, 1.0f);
+    }
     return t;
+}
+
+LearnedProsody LearnedProsody::load(const std::filesystem::path& path, const std::vector<std::string>& only) {
+    for (const std::string& name : only) {
+        if (!parse_emotion_label(name)) throw ConfigError("learned prosody plan: bad emotion '" + name + "' to keep");
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw ConfigError("learned prosody plan not found: " + path.string());
+    nlohmann::json root;
+    try {
+        root = nlohmann::json::parse(in);
+    } catch (const nlohmann::json::exception& e) {
+        throw ConfigError("learned prosody plan '" + path.string() + "': " + e.what());
+    }
+    LearnedProsody out;
+    const nlohmann::json& controls = root.at("controls");
+    for (const auto& name : root.value("adopted", std::vector<std::string>{})) {
+        const auto label = parse_emotion_label(name);
+        if (!label || !controls.contains(name)) throw ConfigError("learned prosody plan: bad emotion '" + name + "'");
+        if (!only.empty() && std::find(only.begin(), only.end(), name) == only.end()) continue;
+        const nlohmann::json& c = controls.at(name);
+        out.controls[*label] = {c.at("speed").get<float>(), c.at("pitch_st").get<float>(), c.at("range").get<float>(),
+                                c.at("fall").get<float>()};
+    }
+    return out;
 }
 
 bool EmotionController::feedback(float ecs, Vad delta, Vad axis_confidence) {

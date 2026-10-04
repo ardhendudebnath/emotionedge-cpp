@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 
 #include "core/prosody/controller.hpp"
@@ -55,6 +56,57 @@ TEST(EmotionController, FollowsTheRulesTable) {
         EXPECT_LE(p.pause_ms, 100.0f);
         EXPECT_GT(p.accent, 1.0f);
     }
+}
+
+// A learned plan (ml/train/learn_controller.py) replaces the rules' rate, pitch, range and
+// contour for the emotions it lists, scaled by how far the target reaches toward the emotion's
+// prototype; other emotions and the other targets keep the rules.
+TEST(EmotionController, AppliesALearnedPlanForItsEmotions) {
+    LearnedProsody learned;
+    learned.controls[EmotionLabel::Sadness] = {.speed = 0.8f, .pitch_st = 1.5f, .range = 0.9f, .fall = 0.4f};
+    EmotionController c;
+    const EmotionController rules;
+    c.set_learned(learned);
+    const Vad sad = prototype(EmotionLabel::Sadness);
+
+    const ProsodyTargets full = c.plan(sad, 1.0f, hindi());
+    EXPECT_NEAR(full.rate_pct, -20.0f, 1e-3f);
+    EXPECT_NEAR(full.pitch_pct, (std::pow(2.0f, 1.5f / 12.0f) - 1.0f) * 100.0f, 1e-3f);
+    EXPECT_NEAR(full.range_pct, -10.0f, 1e-3f);
+    EXPECT_NEAR(full.final_fall, 0.4f, 1e-5f);
+    EXPECT_EQ(full.energy_db, rules.plan(sad, 1.0f, hindi()).energy_db);  // not learned: the rules
+
+    // 60% of the way to the prototype (still nearest to it): 60% of the learned changes.
+    const ProsodyTargets part = c.plan(sad * 0.6f, 1.0f, hindi());
+    EXPECT_NEAR(part.rate_pct, -12.0f, 1e-3f);
+    EXPECT_NEAR(part.final_fall, 0.24f, 1e-5f);
+    // Half way is as near to neutral as to sadness: the rules.
+    EXPECT_EQ(c.plan(sad * 0.5f, 1.0f, hindi()).rate_pct, rules.plan(sad * 0.5f, 1.0f, hindi()).rate_pct);
+    EXPECT_NEAR(c.plan(sad, 0.3f, hindi()).rate_pct, 0.0f, 1e-5f);  // no confidence: neutral
+
+    const Vad joy = prototype(EmotionLabel::Joy);  // not in the plan
+    EXPECT_EQ(c.plan(joy, 1.0f, hindi()).rate_pct, rules.plan(joy, 1.0f, hindi()).rate_pct);
+}
+
+TEST(LearnedProsody, LoadsOnlyTheAdoptedEmotions) {
+    const auto path = std::filesystem::temp_directory_path() / "ee_learned_plan.json";
+    {
+        std::ofstream out(path);
+        out << R"({"adopted": ["joy", "sadness"], "controls": {
+            "joy": {"speed": 1.1, "pitch_st": 2.0, "range": 1.4, "fall": 0.3},
+            "sadness": {"speed": 0.9, "pitch_st": 1.0, "range": 0.5, "fall": -0.5},
+            "anger": {"speed": 1.2, "pitch_st": 3.0, "range": 1.5, "fall": 0.5}}})";
+    }
+    const LearnedProsody plan = LearnedProsody::load(path);
+    ASSERT_EQ(plan.controls.size(), 2u);
+    EXPECT_FLOAT_EQ(plan.controls.at(EmotionLabel::Joy).range, 1.4f);
+    // plan_emotions: only the listed ones (an adopted emotion may still fail end to end).
+    const LearnedProsody sad_only = LearnedProsody::load(path, {"sadness", "anger"});
+    ASSERT_EQ(sad_only.controls.size(), 1u);  // anger is listed but was not adopted
+    EXPECT_FLOAT_EQ(sad_only.controls.at(EmotionLabel::Sadness).speed, 0.9f);
+    EXPECT_THROW((void)LearnedProsody::load(path, {"glee"}), ConfigError);
+    std::filesystem::remove(path);
+    EXPECT_THROW((void)LearnedProsody::load("/no/such/plan.json"), ConfigError);
 }
 
 TEST(EmotionController, LowConfidenceShrinksTowardNeutral) {
