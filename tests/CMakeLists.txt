@@ -34,6 +34,11 @@ add_executable(ee_tests
     tts/test_kokoro_g2p.cpp
     tts/test_tts.cpp)
 
+if(EE_WITH_WEBSOCKET)
+    target_sources(ee_tests PRIVATE server/test_server.cpp)
+    target_link_libraries(ee_tests PRIVATE ee::server ee::websocket)
+endif()
+
 target_include_directories(ee_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ee_tests PRIVATE ee::pipeline nlohmann_json::nlohmann_json GTest::gtest_main)
 target_compile_definitions(ee_tests PRIVATE EE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

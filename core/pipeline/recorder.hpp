@@ -37,6 +37,7 @@ struct UtteranceRecord {
 /// Stage 5.3 "Outputs & Interfaces": collects transcripts, emotion, translations, prosody plans,
 /// ECS scores and playout times per utterance, and at the end writes live-caption files:
 /// SRT captions with emotion tags and a JSON session export (the WAV comes from playback).
+/// With Services::events set it also publishes each result as it arrives (event_json).
 class RecorderStage final : public IStage {
 public:
     void open(StageContext& ctx) override;
@@ -54,6 +55,16 @@ private:
     std::string json_path_;
     bool emotion_tags_ = true;
 };
+
+/// The live event for a frame the recorder receives, as one JSON object; empty for kinds it does
+/// not publish. Each event has "type" and "utterance":
+///   transcript   final, text, language, start, end, stable_words   (partial and final ASR)
+///   emotion      label, valence, arousal, dominance, confidence, emphasis   (3.1)
+///   translation  final, text, language, emphasis                    (drafts and the final)
+///   prosody      the controller's plan (4.1)
+///   consistency  ecs, heard {label, valence, arousal, dominance}     (5.2, one per clause)
+///   playout      start, end on the output timeline (5.1)
+[[nodiscard]] std::string event_json(const Frame& frame);
 
 /// SRT text for the records (target-language captions, `[anger] ...` tags when enabled).
 [[nodiscard]] std::string to_srt(const std::vector<UtteranceRecord>& records, bool emotion_tags = true);

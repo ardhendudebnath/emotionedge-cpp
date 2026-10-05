@@ -31,6 +31,7 @@ option(EE_WHISPER_CUDA "Build whisper.cpp with its CUDA backend (needs the CUDA 
 option(EE_WITH_CTRANSLATE2 "CTranslate2 + SentencePiece translation adapter (NLLB-200)" OFF)
 option(EE_WITH_PIPER "Piper TTS adapter (ONNX Runtime + espeak-ng)" OFF)
 option(EE_WITH_MINIAUDIO "miniaudio live capture and playback" OFF)
+option(EE_WITH_WEBSOCKET "IXWebSocket streaming server (emotionedge serve)" OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 include(Warnings)
@@ -62,4 +63,5 @@ if(EE_BUILD_TESTS)
 endif()
 
 message(STATUS "EmotionEdge ${PROJECT_VERSION}: onnxruntime=${EE_WITH_ONNXRUNTIME} whisper=${EE_WITH_WHISPER} "
-               "ctranslate2=${EE_WITH_CTRANSLATE2} piper=${EE_WITH_PIPER} miniaudio=${EE_WITH_MINIAUDIO}")
+               "ctranslate2=${EE_WITH_CTRANSLATE2} piper=${EE_WITH_PIPER} miniaudio=${EE_WITH_MINIAUDIO} "
+               "websocket=${EE_WITH_WEBSOCKET}")

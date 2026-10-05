@@ -13,6 +13,7 @@ emotionedge say --engine piper --model-id tts.piper.en_US.lessac.medium --text "
                                       # test input for real ASR: '|' separates utterances (--gap seconds)
 emotionedge models verify             # SHA-256 check of models/manifest.json
 emotionedge stages                    # registered stage types
+emotionedge serve --port 8080         # WebSocket server, one live session per connection (-DEE_WITH_WEBSOCKET=ON)
 emotionedge run --input speech.wav --config config/pipeline.engines.yaml --realtime --echo-sim -6 \
     --set frontend.record=out/echo/run   # what an open loudspeaker would do, recorded
 ```
@@ -50,7 +51,55 @@ Devices:
   e.g. to find nodes that leave the GPU.
 - `gpu_id` picks the GPU.
 
+## `emotionedge serve` (WebSocket server, 5.3)
+
+Built with `-DEE_WITH_WEBSOCKET=ON`. That fetches IXWebSocket v12.0.1 (BSD-3), pinned by SHA-256,
+with no TLS or zlib.
+
+```bash
+emotionedge serve --config config/pipeline.engines.yaml --port 8080 [--host 127.0.0.1] [--max-sessions 1]
+python apps/web/stream_wav.py speech.wav --url ws://127.0.0.1:8080/   # reference client (pip install websockets)
+```
+
+Open `apps/web/index.html` for a browser client. It streams the microphone or a WAV file, and
+shows live captions with the emotion and ECS while the translation plays. Serve the folder
+(`python -m http.server -d apps/web`) if the browser refuses the microphone on `file://`.
+
+Each connection runs one live session, the same threaded graph as `live`:
+- **The speaker is the client.** The translated speech goes out at playback pace, as a sound card
+  would take it, so adaptive pacing and barge-in behave as they do on a device.
+- **Sessions are not shared.** Each one loads its own models: about 3 GB of GPU memory and a few
+  seconds before `ready`. `--max-sessions` refuses connections beyond the limit.
+
+The protocol on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate (the front
+end resamples it):
+
+| Direction | Frame | Content |
+|---|---|---|
+| client → server | binary | mono 16-bit little-endian PCM at `rate` |
+| client → server | text | `{"type": "end"}`: no more speech; finish, play out, then `done` |
+| server → client | text | `{"type": "ready", input_rate, output_rate, source_language, target_language}` once the models are loaded. Audio sent earlier is buffered, up to 30 s |
+| server → client | text | one event per result, each with `type` and `utterance`: `transcript` (partial and final), `emotion` (V·A·D, label, confidence, emphasis), `translation` (drafts and the final), `prosody` (the controller's plan), `consistency` (ECS and what 5.2 heard, per clause), `playout` |
+| server → client | text | `{"type": "done", "session": {...}}`: the session export, after the last audio. Or `{"type": "error", message}` |
+| server → client | binary | the translated speech: mono 16-bit little-endian PCM at `output_rate` (24 kHz), in 10 ms blocks. Silence is not sent |
+
+Measured through the server on the real engines (RTX 5070 Ti), the server's own end-to-end
+telemetry matches in-process runs ([docs/benchmark.md](../docs/benchmark.md)):
+
+| Input | End to end through the server | In-process benchmark |
+|---|---|---|
+| jfk.wav | p50 373 ms, p95 610 ms | p50 381–389 ms, p95 628–647 ms |
+| 3 back-to-back sentences | p50 877 ms, p95 1655 ms | p50 844–893 ms, p95 1648–1687 ms |
+
+The client saw 360–442 ms from the end of an utterance to its first translated audio, where no
+earlier translation was still playing.
+
+Limits:
+- **Plain `ws://`, no authentication**, listening on localhost by default. Put a TLS-terminating
+  proxy in front of it before exposing it.
+- **A client that stops reading** stalls its own session's playback.
+
 ## Planned (roadmap phase 5 "Ship")
 
 - **Desktop UI** (Dear ImGui): live captions with emotion tags, device selection, latency panel.
-- **Server**: gRPC / WebSocket streaming API over the same `Session`/`Graph` runtime.
+- **gRPC** next to the WebSocket API, for typed clients.

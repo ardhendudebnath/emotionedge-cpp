@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EmotionEdge live</title>
+<style>
+  :root { --bg: #fafaf9; --fg: #1c1917; --muted: #78716c; --card: #fff; --line: #e7e5e4; --accent: #2563eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1917; --fg: #f5f5f4; --muted: #a8a29e; --card: #292524; --line: #44403c; --accent: #60a5fa; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.note { color: var(--muted); margin: 0 0 16px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  input[type=text] { flex: 1 1 220px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+                     background: var(--card); color: var(--fg); font: inherit; }
+  button, label.file { padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+                       color: var(--fg); font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=file] { display: none; }
+  #status { color: var(--muted); margin-bottom: 16px; min-height: 1.5em; }
+  .utt { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .src { color: var(--muted); }
+  .src.partial, .tgt.draft { font-style: italic; opacity: .7; }
+  .tgt { font-size: 18px; margin-top: 4px; }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .tag { display: inline-block; padding: 0 8px; border-radius: 999px; background: var(--line); color: var(--fg);
+         font-size: 12px; margin-right: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>EmotionEdge live</h1>
+  <p class="note">A client for <code>emotionedge serve</code>. Speak, or send a WAV file; captions, the emotion
+    read from the voice and the translated speech come back as they are produced. Use headphones with the
+    microphone, or the translation comes back into it.</p>
+  <div class="bar">
+    <input id="url" type="text" value="ws://127.0.0.1:8080/" aria-label="Server URL">
+    <button id="mic" class="primary">Microphone</button>
+    <label class="file">WAV file<input id="file" type="file" accept="audio/*"></label>
+    <button id="stop" disabled>Stop</button>
+  </div>
+  <div id="status">Not connected.</div>
+  <div id="captions"></div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let ws = null, ctx = null, playAt = 0, outputRate = 24000, stopInput = null;
+const cards = new Map();
+
+function status(text) { $("status").textContent = text; }
+
+function card(id) {
+  if (!cards.has(id)) {
+    const el = document.createElement("div");
+    el.className = "utt";
+    el.innerHTML = '<div class="src"></div><div class="tgt"></div><div class="meta"></div>';
+    $("captions").prepend(el);
+    cards.set(id, { el, ecs: [] });
+  }
+  return cards.get(id);
+}
+
+function onEvent(e) {
+  if (e.type === "ready") { outputRate = e.output_rate; status(`Translating ${e.source_language} → ${e.target_language}.`); return; }
+  if (e.type === "error") { status("Server: " + e.message); return; }
+  if (e.type === "done") { status(`Done: ${e.session.utterances.length} utterance(s).`); finish(); return; }
+  const c = card(e.utterance), q = (s) => c.el.querySelector(s);
+  if (e.type === "transcript") { q(".src").textContent = e.text; q(".src").classList.toggle("partial", !e.final); }
+  if (e.type === "translation") { q(".tgt").textContent = e.text; q(".tgt").classList.toggle("draft", !e.final); }
+  if (e.type === "emotion") {
+    c.emotion = `<span class="tag">${e.label}</span>V ${e.valence.toFixed(2)} · A ${e.arousal.toFixed(2)} · ` +
+                `D ${e.dominance.toFixed(2)} · confidence ${e.confidence.toFixed(2)}`;
+  }
+  if (e.type === "consistency") c.ecs.push(e.ecs);
+  const ecs = c.ecs.length ? ` · ECS ${(c.ecs.reduce((a, b) => a + b) / c.ecs.length).toFixed(2)}` : "";
+  q(".meta").innerHTML = (c.emotion || "") + ecs;
+}
+
+function play(buffer) {  // 16-bit little-endian PCM at outputRate, queued back to back
+  const pcm = new Int16Array(buffer), audio = ctx.createBuffer(1, pcm.length, outputRate);
+  const ch = audio.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+  const src = ctx.createBufferSource();
+  src.buffer = audio;
+  src.connect(ctx.destination);
+  playAt = Math.max(playAt, ctx.currentTime + 0.08);  // a small jitter buffer
+  src.start(playAt);
+  playAt += audio.duration;
+}
+
+function toPcm16(samples) {
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) out[i] = Math.max(-1, Math.min(1, samples[i])) * 32767;
+  return out.buffer;
+}
+
+function connect(rate) {
+  return new Promise((resolve, reject) => {
+    const url = new URL($("url").value);
+    url.searchParams.set("rate", String(Math.round(rate)));
+    ws = new WebSocket(url);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => { status("Loading the models…"); resolve(); };
+    ws.onerror = () => reject(new Error("cannot connect to " + url));
+    ws.onclose = () => { if (stopInput) finish(); };
+    ws.onmessage = (m) => typeof m.data === "string" ? onEvent(JSON.parse(m.data)) : play(m.data);
+  });
+}
+
+function busy(on) { $("mic").disabled = on; $("file").disabled = on; $("stop").disabled = !on; }
+
+function finish() {
+  if (stopInput) { stopInput(); stopInput = null; }
+  busy(false);
+}
+
+$("mic").onclick = async () => {
+  try {
+    ctx = ctx || new AudioContext();
+    await ctx.resume();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false } });
+    // An inline worklet hands the microphone's samples to the page in small blocks.
+    const code = `registerProcessor("tap", class extends AudioWorkletProcessor {
+      process(inputs) { if (inputs[0][0]) this.port.postMessage(inputs[0][0].slice(0)); return true; } });`;
+    await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
+    await connect(ctx.sampleRate);
+    const mic = ctx.createMediaStreamSource(stream), tap = new AudioWorkletNode(ctx, "tap");
+    tap.port.onmessage = (m) => { if (ws.readyState === 1) ws.send(toPcm16(m.data)); };
+    mic.connect(tap);
+    busy(true);
+    stopInput = () => { mic.disconnect(); stream.getTracks().forEach((t) => t.stop()); };
+  } catch (err) { status(String(err)); finish(); }
+};
+
+$("file").onchange = async (ev) => {
+  const f = ev.target.files[0];
+  ev.target.value = "";
+  if (f) await streamFile(await f.arrayBuffer());
+};
+
+// Streams an encoded audio file (WAV, MP3, ...) at speaking pace, then asks the server to finish.
+async function streamFile(bytes) {
+  try {
+    ctx = ctx || new AudioContext();
+    await ctx.resume();
+    const decoded = await ctx.decodeAudioData(bytes);
+    const mono = decoded.getChannelData(0), rate = decoded.sampleRate, block = Math.round(rate / 50);
+    await connect(rate);
+    busy(true);
+    let pos = 0;
+    const timer = setInterval(() => {  // real-time pace: 20 ms of speech every 20 ms
+      if (ws.readyState !== 1) return;
+      if (pos >= mono.length) { ws.send(JSON.stringify({ type: "end" })); clearInterval(timer); status("Sent; finishing…"); return; }
+      ws.send(toPcm16(mono.subarray(pos, pos + block)));
+      pos += block;
+    }, 20);
+    stopInput = () => clearInterval(timer);
+  } catch (err) { status(String(err)); finish(); }
+}
+
+$("stop").onclick = () => {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "end" }));
+  if (stopInput) { stopInput(); stopInput = null; }
+  status("Stopped; finishing what was said…");
+};
+</script>
+</body>
+</html>

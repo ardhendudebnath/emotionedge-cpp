@@ -36,6 +36,11 @@
 #if defined(EE_HAVE_MINIAUDIO)
 #include "core/audio/device.hpp"
 #endif
+#if defined(EE_HAVE_WEBSOCKET)
+#include <thread>
+
+#include "core/server/translation_server.hpp"
+#endif
 
 namespace fs = std::filesystem;
 using namespace ee;
@@ -52,6 +57,8 @@ commands:
   run        Translate a WAV file:  run --input speech.wav [--script words.json]
   live       Translate the microphone in real time (needs -DEE_WITH_MINIAUDIO=ON)
   devices    List audio devices (needs -DEE_WITH_MINIAUDIO=ON)
+  serve      WebSocket server, one live session per connection (needs -DEE_WITH_WEBSOCKET=ON):
+             serve [--port 8080] [--host 127.0.0.1] [--max-sessions 1]; see apps/README.md
   models     List or verify model files:  models [list|verify] [--manifest FILE]
   say        Speak text with a TTS engine into a WAV (test input for real ASR):
              say --text "One. | Two." [--engine piper --model-id ID --manifest FILE] [--out F]
@@ -315,6 +322,37 @@ int cmd_live(const Args& args) {
 #endif
 }
 
+#if defined(EE_HAVE_WEBSOCKET)
+std::atomic<bool> g_serve_stop{false};
+
+void on_serve_interrupt(int) { g_serve_stop.store(true); }  // lock-free atomic: async-signal-safe
+#endif
+
+int cmd_serve(const Args& args) {
+#if defined(EE_HAVE_WEBSOCKET)
+    TranslationServer::Options o;
+    o.host = args.get("host", "127.0.0.1");
+    o.port = std::stoi(args.get("port", "8080"));
+    o.max_sessions = std::stoul(args.get("max-sessions", "1"));
+    o.config = resolve_config(args);
+    if (args.has("target")) o.overrides.emplace_back("pipeline.target_language", args.get("target"));
+    for (const auto& kv : args.sets) o.overrides.push_back(kv);
+    TranslationServer server(o);
+    server.start();
+    std::printf("serving ws://%s:%d/ with %s: one live session per connection, up to %zu at a time. "
+                "Ctrl+C stops.\n",
+                o.host.c_str(), o.port, o.config.generic_string().c_str(), o.max_sessions);
+    std::signal(SIGINT, on_serve_interrupt);
+    std::signal(SIGTERM, on_serve_interrupt);
+    while (!g_serve_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    server.stop();
+    return 0;
+#else
+    (void)args;
+    throw std::runtime_error("serve needs a build with -DEE_WITH_WEBSOCKET=ON");
+#endif
+}
+
 int cmd_devices() {
 #if defined(EE_HAVE_MINIAUDIO)
     for (const AudioDeviceInfo& d : list_audio_devices()) {
@@ -512,6 +550,7 @@ int main(int argc, char** argv) {
         if (args.command == "run") return cmd_run(args);
         if (args.command == "live") return cmd_live(args);
         if (args.command == "devices") return cmd_devices();
+        if (args.command == "serve") return cmd_serve(args);
         if (args.command == "models") return cmd_models(args);
         if (args.command == "stages") return cmd_stages();
         if (args.command == "say") return cmd_say(args);

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,6 +39,10 @@ struct SessionOptions {
     std::optional<EchoSimulator::Config> echo_sim;
 
     AudioIo* live_io = nullptr;  ///< Live mode: capture/playback wired to devices by the caller
+    /// Live mode: called once the graph is built (models loaded) and running.
+    std::function<void()> on_ready;
+    /// Any mode: each result as it arrives (RecorderStage's events). Must outlive run().
+    IEventListener* events = nullptr;
 
     // Output (Offline / Realtime).
     int output_rate = 24000;

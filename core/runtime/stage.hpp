@@ -15,11 +15,21 @@ class Telemetry;
 class ModelRegistry;
 struct AudioIo;
 
+/// Receives the pipeline's results as they happen (5.3 live outputs, e.g. a streaming server).
+/// Called from stage threads: implementations must be thread-safe and must not block.
+class IEventListener {
+public:
+    virtual ~IEventListener() = default;
+    /// One JSON object per event, with a "type" field (see RecorderStage).
+    virtual void on_event(std::string_view json) = 0;
+};
+
 /// Cross-cutting services shared by every stage (blueprint "Edge runtime").
 struct Services {
     telemetry::Telemetry* telemetry = nullptr;  ///< always set by the Graph
     const ModelRegistry* models = nullptr;      ///< optional: models/manifest.json
     AudioIo* audio = nullptr;                   ///< optional: capture/playback endpoints
+    IEventListener* events = nullptr;           ///< optional: live results (5.3)
 };
 
 /// What a running stage sees of the pipeline: its parameters, the shared services and the
