@@ -144,3 +144,67 @@ if(EE_WITH_WEBSOCKET)
     target_compile_definitions(ee_websocket INTERFACE EE_HAVE_WEBSOCKET=1)
     add_library(ee::websocket ALIAS ee_websocket)
 endif()
+
+# ---- Desktop app (5.3): Dear ImGui + GLFW, HarfBuzz, Noto Sans Devanagari -------------------------
+# Dear ImGui does not shape text, which Hindi needs (vowel signs reorder, consonants join), so
+# HarfBuzz shapes the captions. GLFW is built for X11 only: Wayland desktops (and WSLg) run it
+# through XWayland. Everything is fetched at pinned, hash-verified versions.
+if(EE_WITH_DESKTOP)
+    if(NOT EE_WITH_MINIAUDIO)
+        message(FATAL_ERROR "EE_WITH_DESKTOP needs EE_WITH_MINIAUDIO (microphone and speaker)")
+    endif()
+    if(NOT EE_FETCH_DEPS)
+        message(FATAL_ERROR "EE_WITH_DESKTOP fetches its dependencies: it needs EE_FETCH_DEPS=ON")
+    endif()
+    FetchContent_Declare(imgui
+        URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9b.tar.gz
+        URL_HASH SHA256=21d8a0a565e85dce943e375db00812c2f3f0ab21f3f0f7964e364a63422d7f99
+        SOURCE_SUBDIR no-cmake)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(glfw
+        URL https://github.com/glfw/glfw/releases/download/3.5.1/glfw-3.5.1.zip
+        URL_HASH SHA256=ea79bc5feffc254c87291980c2d0bce9acebb68c4983b79f961dcd2cb8a611a0)
+    # The shaper only: no FreeType, ICU or GLib, and none of HarfBuzz's extra libraries.
+    foreach(_opt HB_BUILD_SUBSET HB_BUILD_RASTER HB_BUILD_VECTOR HB_BUILD_GPU HB_BUILD_UTILS)
+        set(${_opt} OFF CACHE BOOL "" FORCE)
+    endforeach()
+    set(BUILD_SHARED_LIBS OFF)
+    FetchContent_Declare(harfbuzz
+        URL https://github.com/harfbuzz/harfbuzz/releases/download/14.5.1/harfbuzz-14.5.1.tar.xz
+        URL_HASH SHA256=7e2fa4e8c7c98e8d8140671f5772542afaaa6acccfbd746506886b6d85f7f8d6)
+    FetchContent_MakeAvailable(imgui glfw harfbuzz)
+    foreach(_t glfw harfbuzz)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
+            set_target_properties(${_t} PROPERTIES SYSTEM ON)
+        endif()
+        target_compile_options(${_t} PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>)
+    endforeach()
+
+    add_library(ee_imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+    target_include_directories(ee_imgui SYSTEM PUBLIC "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends")
+    target_link_libraries(ee_imgui PUBLIC glfw ${CMAKE_DL_LIBS})
+    # ImGui's OpenGL backend loads GL itself; GLFW must not include the system GL headers.
+    target_compile_definitions(ee_imgui PUBLIC GLFW_INCLUDE_NONE)
+    target_compile_options(ee_imgui PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>)
+    add_library(ee::imgui ALIAS ee_imgui)
+
+    # The caption font, under the SIL Open Font License 1.1 (copied next to it).
+    set(_font_base https://raw.githubusercontent.com/google/fonts/2bc5d431b584d89e646214bf6cfa75494e76ceea/ofl/notosansdevanagari)
+    set(EE_DESKTOP_FONT "${CMAKE_BINARY_DIR}/fonts/NotoSansDevanagari.ttf")
+    if(NOT EXISTS "${EE_DESKTOP_FONT}")
+        file(DOWNLOAD "${_font_base}/NotoSansDevanagari%5Bwdth%2Cwght%5D.ttf" "${EE_DESKTOP_FONT}"
+            EXPECTED_HASH SHA256=14ec4af41f27482216d1c2229f417ff9b1425e1babb014e57d1d40d03229853e TLS_VERIFY ON)
+        file(DOWNLOAD "${_font_base}/OFL.txt" "${CMAKE_BINARY_DIR}/fonts/OFL.txt"
+            EXPECTED_HASH SHA256=a216f6f8d85c7228093e0ee5e258d9d377e6671f68acb4db1930b29583d0f331 TLS_VERIFY ON)
+    endif()
+endif()

@@ -137,6 +137,7 @@ ee_add_module(pipeline
     SOURCES
         pipeline/builtin_stages.cpp
         pipeline/demo.cpp
+        pipeline/live_view.cpp
         pipeline/recorder.cpp
         pipeline/session.cpp
     PUBLIC_DEPS ee::tts ee::translate ee::prosody ee::asr ee::emotion ee::audio ee::runtime ee::telemetry

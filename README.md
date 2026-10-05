@@ -19,6 +19,8 @@ an RTX 5070 Ti laptop GPU, jfk.wav runs end to end in 381–389 ms p50 and 628�
 < 800 ms p95). Back-to-back speech still misses the target (1648–1687 ms p95), and so does a CPU
 alone (1412–1489 ms on jfk.wav).
 
+![emotionedge-desktop: captions with the emotion read from the voice, the Hindi translation and its ECS, and the live latency budget](docs/images/desktop.png)
+
 - **Runtime (done).** Lock-free SPSC queues, a YAML-configured stage graph, thread-per-stage
   scheduling with core pinning, and backpressure that sheds stale partials but never audio.
   Also telemetry (latency budget, ECS, Prometheus, Perfetto) and a SHA-256-verified model
@@ -316,6 +318,7 @@ The measurements used:
 | `EE_WITH_PIPER` | Piper voices | ONNX Runtime, espeak-ng |
 | `EE_WITH_MINIAUDIO` | `emotionedge live` (mic → speaker) | fetched automatically |
 | `EE_WITH_WEBSOCKET` | `emotionedge serve`: WebSocket streaming server (5.3) | fetched automatically (IXWebSocket, no TLS) |
+| `EE_WITH_DESKTOP` | `emotionedge-desktop`: the desktop app (5.3) | `EE_WITH_MINIAUDIO`, X11 headers; Dear ImGui, GLFW, HarfBuzz and the font are fetched |
 
 [models/README.md](models/README.md) lists every model with its license. NLLB-200 weights are
 non-commercial, and several emotion datasets are research-only: check before shipping.
@@ -334,7 +337,7 @@ core/            C++20 runtime (one static library per module)
   telemetry/     metrics, latency budget, ECS, Perfetto trace
   pipeline/      stage registry, outputs (5.3), session runner, demo input
   server/        WebSocket streaming server (5.3)
-apps/            emotionedge CLI; web/: browser and Python clients for the server
+apps/            emotionedge CLI; desktop/: the desktop app; web/: clients for the server
 bench/           latency harness (ee_bench)
 config/          pipeline graphs, expressivity profiles, emotion space, phrasebook
 models/          manifest.json + fetch script (model files are not committed)
@@ -375,8 +378,10 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
 5. **Ship** (in progress). Done:
    - the public benchmark report (`ml/eval/benchmark.py`, [docs/benchmark.md](docs/benchmark.md));
    - the WebSocket server (`emotionedge serve`, [apps/README.md](apps/README.md)), with a browser
-     client and a Python reference client.
+     client and a Python reference client;
+   - the desktop app (`emotionedge-desktop`): live captions with shaped Hindi, emotion and the
+     latency budget.
 
-   Next: desktop app, gRPC, Android and Jetson builds.
+   Next: gRPC, Android and Jetson builds.
 
 Every phase ends with the P5 quality gate (`ml/eval/quality_gate.py`).
