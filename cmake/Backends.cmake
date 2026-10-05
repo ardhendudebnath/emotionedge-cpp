@@ -115,3 +115,32 @@ if(EE_WITH_MINIAUDIO)
     target_compile_definitions(ee_miniaudio INTERFACE EE_HAVE_MINIAUDIO=1)
     add_library(ee::miniaudio ALIAS ee_miniaudio)
 endif()
+
+# ---- IXWebSocket (streaming server, 5.3) --------------------------------------------------------
+if(EE_WITH_WEBSOCKET)
+    find_package(ixwebsocket CONFIG QUIET)
+    if(NOT ixwebsocket_FOUND)
+        if(NOT EE_FETCH_DEPS)
+            message(FATAL_ERROR "ixwebsocket not found and EE_FETCH_DEPS=OFF")
+        endif()
+        # Plain ws:// with no compression: no OpenSSL or zlib dependency. Put a TLS proxy in
+        # front of the server to expose it beyond localhost.
+        set(USE_TLS OFF CACHE BOOL "" FORCE)
+        set(USE_ZLIB OFF CACHE BOOL "" FORCE)
+        set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
+        set(BUILD_SHARED_LIBS OFF)
+        FetchContent_Declare(ixwebsocket
+            URL https://github.com/machinezone/IXWebSocket/archive/refs/tags/v12.0.1.tar.gz
+            URL_HASH SHA256=d23bdc91dbfe2b9ae13c322d539392d7a6b8b506560f41c90e227fa0f86a2405)
+        FetchContent_MakeAvailable(ixwebsocket)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
+            set_target_properties(ixwebsocket PROPERTIES SYSTEM ON)
+        endif()
+        # Its own -Wall -Wextra flag the zlib-less stubs' unused parameters: not ours to fix.
+        target_compile_options(ixwebsocket PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>)
+    endif()
+    add_library(ee_websocket INTERFACE)
+    target_link_libraries(ee_websocket INTERFACE $<IF:$<TARGET_EXISTS:ixwebsocket::ixwebsocket>,ixwebsocket::ixwebsocket,ixwebsocket>)
+    target_compile_definitions(ee_websocket INTERFACE EE_HAVE_WEBSOCKET=1)
+    add_library(ee::websocket ALIAS ee_websocket)
+endif()

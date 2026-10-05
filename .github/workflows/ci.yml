@@ -63,14 +63,15 @@ jobs:
       TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
     steps:
       - uses: actions/checkout@v4
+      # With the WebSocket server: its socket, session and pump threads get checked too.
       - name: AddressSanitizer + UndefinedBehaviorSanitizer
         run: |
-          cmake --preset asan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF
+          cmake --preset asan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF -DEE_WITH_WEBSOCKET=ON
           cmake --build build/asan -j 4
           ctest --test-dir build/asan --output-on-failure -j 2
       - name: ThreadSanitizer
         run: |
-          cmake --preset tsan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF
+          cmake --preset tsan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF -DEE_WITH_WEBSOCKET=ON
           cmake --build build/tsan -j 4
           # TSan cannot map its shadow memory under high-entropy ASLR: disable it for the run.
           setarch "$(uname -m)" -R ctest --test-dir build/tsan --output-on-failure
@@ -112,7 +113,7 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON \
             -DEE_WITH_ONNXRUNTIME=ON -DEE_WITH_WHISPER=ON -DEE_WITH_CTRANSLATE2=ON \
-            -DEE_WITH_PIPER=ON -DEE_WITH_MINIAUDIO=ON \
+            -DEE_WITH_PIPER=ON -DEE_WITH_MINIAUDIO=ON -DEE_WITH_WEBSOCKET=ON \
             -DEE_ONNXRUNTIME_ROOT="$HOME/ort" -DCMAKE_PREFIX_PATH="$HOME/ct2"
       - name: Build
         run: cmake --build build -j 4

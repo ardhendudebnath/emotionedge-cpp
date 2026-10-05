@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 
 #include "core/audio/dsp.hpp"
@@ -40,12 +41,30 @@ struct PipelineRun {
     std::uint64_t end_to_end_count = 0;
 };
 
+/// Collects the live events (5.3) a session publishes.
+class EventLog final : public IEventListener {
+public:
+    void on_event(std::string_view event) override {
+        const std::lock_guard<std::mutex> lock(mu_);
+        events_.push_back(json::parse(event));
+    }
+    [[nodiscard]] std::vector<json> events() const {
+        const std::lock_guard<std::mutex> lock(mu_);
+        return events_;
+    }
+
+private:
+    mutable std::mutex mu_;
+    std::vector<json> events_;
+};
+
 PipelineRun run_pipeline(const DemoInput& demo, const fs::path& dir, RunMode mode,
-                 std::vector<std::pair<std::string, std::string>> extra = {}) {
+                 std::vector<std::pair<std::string, std::string>> extra = {}, IEventListener* events = nullptr) {
     std::ofstream(dir / "script.json", std::ios::binary) << demo.script_json;
     SessionOptions o;
     o.config = fs::path(EE_SOURCE_DIR) / "config" / "pipeline.yaml";
     o.mode = mode;
+    o.events = events;
     o.speed = 4.0;
     o.input_samples = demo.audio;
     o.input_rate = demo.sample_rate;
@@ -152,6 +171,48 @@ TEST(PipelineE2E, BlueprintWalkthroughOffline) {
     EXPECT_EQ(run.end_to_end_count, 1u);
 
     check_golden("walkthrough", features(run.result.output_audio, run.result.output_rate));
+}
+
+// 5.3 live outputs: each result goes out as an event while the session runs (what the
+// WebSocket server streams), in pipeline order and tied to its utterance.
+TEST(PipelineE2E, PublishesEachResultAsALiveEvent) {
+    const fs::path dir = fresh_dir("events");
+    EventLog log;
+    const PipelineRun run = run_pipeline(make_walkthrough_input(), dir, RunMode::Offline, {}, &log);
+    ASSERT_TRUE(run.result.completed);
+    ASSERT_EQ(run.result.utterances.size(), 1u);
+    const std::uint64_t id = run.result.utterances[0].id;
+
+    const std::vector<json> events = log.events();
+    const auto first = [&](const std::string& type, bool final_only = false) {
+        for (std::size_t i = 0; i < events.size(); ++i) {
+            if (events[i]["type"] == type && (!final_only || events[i].value("final", false))) return i;
+        }
+        return events.size();
+    };
+    const std::size_t heard = first("transcript", true), felt = first("emotion"), translated = first("translation", true),
+                      planned = first("prosody"), scored = first("consistency"), played = first("playout");
+    ASSERT_LT(heard, events.size());
+    ASSERT_LT(felt, events.size());
+    ASSERT_LT(translated, events.size());
+    ASSERT_LT(planned, events.size());
+    ASSERT_LT(scored, events.size());
+    ASSERT_LT(played, events.size());
+    EXPECT_LT(heard, translated);
+    EXPECT_LT(translated, planned);
+    EXPECT_LT(planned, played);
+
+    EXPECT_EQ(events[heard]["text"], "I can't believe you did this!");
+    EXPECT_EQ(events[felt]["label"], "anger");
+    EXPECT_EQ(events[felt]["emphasis"][0], "believe");
+    EXPECT_EQ(events[translated]["text"], kHindi);
+    EXPECT_EQ(events[translated]["emphasis"][0], "यकीन");
+    EXPECT_GT(events[planned]["pitch_pct"].get<double>(), 0.0);
+    EXPECT_GT(events[scored]["ecs"].get<double>(), 0.0);
+    EXPECT_LE(events[scored]["ecs"].get<double>(), 1.0);
+    EXPECT_TRUE(events[scored]["heard"].contains("label"));
+    EXPECT_GT(events[played]["end"].get<double>(), events[played]["start"].get<double>());
+    for (const json& e : events) EXPECT_EQ(e["utterance"].get<std::uint64_t>(), id) << e.dump();
 }
 
 TEST(PipelineE2E, ConversationTracksEachEmotionAndClosesTheLoop) {

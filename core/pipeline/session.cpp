@@ -62,6 +62,7 @@ SessionResult Session::run() {
     Services services;
     services.telemetry = telemetry_.get();
     services.models = models.get();
+    services.events = options_.events;
     const StageRegistry registry = builtin_registry();
 
     switch (options_.mode) {
@@ -131,6 +132,7 @@ SessionResult Session::run() {
         services.audio = options_.live_io;
         Graph graph(spec_, registry, services);
         graph.start();
+        if (options_.on_ready) options_.on_ready();
         const TimePoint deadline = Clock::now() + (options_.timeout.count() > 0 ? options_.timeout : std::chrono::hours(24 * 365));
         while (!graph.finished() && !stop_requested_.load() && Clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));

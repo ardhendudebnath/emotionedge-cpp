@@ -36,6 +36,9 @@ UtteranceRecord& RecorderStage::record(std::uint64_t id) {
 
 void RecorderStage::process(Frame& f) {
     if (f.utterance == 0) return;
+    if (IEventListener* events = ctx_->services().events) {
+        if (const std::string event = event_json(f); !event.empty()) events->on_event(event);
+    }
     switch (f.kind) {
     case FrameKind::Transcript:
         if (f.is_final()) {
@@ -138,7 +141,54 @@ json snapshot_ms(const telemetry::Histogram::Snapshot& s) {
             {"p95_ms", static_cast<double>(s.percentile(0.95)) / 1000.0}};
 }
 
+json emotion_json(const EmotionState& e) {
+    json out = vad_json(e.vad);
+    out["label"] = to_string(e.label);
+    return out;
+}
+
 }  // namespace
+
+std::string event_json(const Frame& f) {
+    json e;
+    switch (f.kind) {
+    case FrameKind::Transcript: {
+        std::vector<std::string> words;
+        for (const Word& w : f.words) words.push_back(w.text);
+        e = {{"type", "transcript"}, {"final", f.is_final()}, {"text", f.text}, {"language", f.language},
+             {"start", f.src_start}, {"end", f.src_end}, {"stable_words", f.stable_words}};
+        break;
+    }
+    case FrameKind::Utterance: {
+        std::vector<std::string> words;
+        for (const Word& w : f.words) words.push_back(w.text);
+        e = emotion_json(f.emotion);
+        e["type"] = "emotion";
+        e["confidence"] = f.emotion.confidence;
+        e["emphasis"] = emphasized_words(words, f.emphasis);
+        break;
+    }
+    case FrameKind::Translation:
+        e = {{"type", "translation"}, {"final", f.is_final()}, {"text", f.text}, {"language", f.language},
+             {"emphasis", emphasized_words(split_words(f.text, f.language), f.emphasis)}};
+        break;
+    case FrameKind::Speech:
+        e = {{"type", "prosody"},          {"pitch_pct", f.prosody.pitch_pct}, {"range_pct", f.prosody.range_pct},
+             {"rate_pct", f.prosody.rate_pct}, {"energy_db", f.prosody.energy_db}, {"pause_ms", f.prosody.pause_ms},
+             {"accent", f.prosody.accent},  {"final_fall", f.prosody.final_fall}};
+        break;
+    case FrameKind::Feedback:  // 5.2 on one synthesized clause: the score and what it heard
+        e = {{"type", "consistency"}, {"ecs", f.score}, {"heard", emotion_json(f.emotion)}};
+        break;
+    case FrameKind::Playout:
+        e = {{"type", "playout"}, {"start", f.out_start}, {"end", f.out_end}};
+        break;
+    default: return {};
+    }
+    e["utterance"] = f.utterance;
+    // ASR can cut a multi-byte character at a token boundary: replace it rather than throw here.
+    return e.dump(-1, ' ', false, json::error_handler_t::replace);
+}
 
 std::string to_srt(const std::vector<UtteranceRecord>& records, bool emotion_tags) {
     std::string out;

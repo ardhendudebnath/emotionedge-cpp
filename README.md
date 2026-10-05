@@ -315,6 +315,7 @@ The measurements used:
 | `EE_WITH_CTRANSLATE2` | NLLB-200 via CTranslate2 + SentencePiece | CTranslate2 install, SentencePiece |
 | `EE_WITH_PIPER` | Piper voices | ONNX Runtime, espeak-ng |
 | `EE_WITH_MINIAUDIO` | `emotionedge live` (mic → speaker) | fetched automatically |
+| `EE_WITH_WEBSOCKET` | `emotionedge serve`: WebSocket streaming server (5.3) | fetched automatically (IXWebSocket, no TLS) |
 
 [models/README.md](models/README.md) lists every model with its license. NLLB-200 weights are
 non-commercial, and several emotion datasets are research-only: check before shipping.
@@ -332,7 +333,8 @@ core/            C++20 runtime (one static library per module)
   tts/           clause chunker, formant stand-in, Piper adapter
   telemetry/     metrics, latency budget, ECS, Perfetto trace
   pipeline/      stage registry, outputs (5.3), session runner, demo input
-apps/            emotionedge CLI
+  server/        WebSocket streaming server (5.3)
+apps/            emotionedge CLI; web/: browser and Python clients for the server
 bench/           latency harness (ee_bench)
 config/          pipeline graphs, expressivity profiles, emotion space, phrasebook
 models/          manifest.json + fetch script (model files are not committed)
@@ -370,8 +372,11 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
    barge-in, the echo path's test loop, and a learned prosody plan for sadness.
    Next: emotion-faithful MT data, an echo canceller tuned on real hardware, and a plan that
    lowers arousal for sadness.
-5. **Ship** (in progress). Done: the public benchmark report (`ml/eval/benchmark.py`,
-   [docs/benchmark.md](docs/benchmark.md)). Next: desktop app, gRPC server, Android and Jetson
-   builds.
+5. **Ship** (in progress). Done:
+   - the public benchmark report (`ml/eval/benchmark.py`, [docs/benchmark.md](docs/benchmark.md));
+   - the WebSocket server (`emotionedge serve`, [apps/README.md](apps/README.md)), with a browser
+     client and a Python reference client.
+
+   Next: desktop app, gRPC, Android and Jetson builds.
 
 Every phase ends with the P5 quality gate (`ml/eval/quality_gate.py`).

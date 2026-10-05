@@ -141,3 +141,11 @@ ee_add_module(pipeline
         pipeline/session.cpp
     PUBLIC_DEPS ee::tts ee::translate ee::prosody ee::asr ee::emotion ee::audio ee::runtime ee::telemetry
     PRIVATE_DEPS nlohmann_json::nlohmann_json)
+
+# ---- server/: WebSocket streaming server, one live session per connection (5.3) ---------------
+if(EE_WITH_WEBSOCKET)
+    ee_add_module(server
+        SOURCES server/translation_server.cpp
+        PUBLIC_DEPS ee::pipeline
+        PRIVATE_DEPS ee::websocket nlohmann_json::nlohmann_json)
+endif()
