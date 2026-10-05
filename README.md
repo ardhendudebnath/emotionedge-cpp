@@ -14,6 +14,11 @@ Roadmap phases 1–3 are done: the baseline pipe, emotion in (emotion2vec+, Dist
 emotion-token NLLB LoRA) and emotion out (Kokoro-82M with learned style offsets). Phase 4 is in
 progress: the models run on a GPU when there is one (see [Real engines](#real-engines)).
 
+[docs/benchmark.md](docs/benchmark.md) has the current numbers, re-measured with one command. On
+an RTX 5070 Ti laptop GPU, jfk.wav runs end to end in 381–389 ms p50 and 628–647 ms p95 (target
+< 800 ms p95). Back-to-back speech still misses the target (1648–1687 ms p95), and so does a CPU
+alone (1412–1489 ms on jfk.wav).
+
 - **Runtime (done).** Lock-free SPSC queues, a YAML-configured stage graph, thread-per-stage
   scheduling with core pinning, and backpressure that sheds stale partials but never audio.
   Also telemetry (latency budget, ECS, Prometheus, Perfetto) and a SHA-256-verified model
@@ -365,6 +370,8 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
    barge-in, the echo path's test loop, and a learned prosody plan for sadness.
    Next: emotion-faithful MT data, an echo canceller tuned on real hardware, and a plan that
    lowers arousal for sadness.
-5. **Ship.** Desktop app, gRPC server, Android and Jetson builds, public benchmark report.
+5. **Ship** (in progress). Done: the public benchmark report (`ml/eval/benchmark.py`,
+   [docs/benchmark.md](docs/benchmark.md)). Next: desktop app, gRPC server, Android and Jetson
+   builds.
 
 Every phase ends with the P5 quality gate (`ml/eval/quality_gate.py`).

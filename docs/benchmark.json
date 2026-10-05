@@ -1,0 +1,1929 @@
+{
+ "environment": {
+  "date": "2026-10-05 00:22 UTC",
+  "commit": "437fe0efb8ad",
+  "dirty": true,
+  "emotionedge": "emotionedge 0.1.0",
+  "os": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "cores": 24,
+  "config": "config/pipeline.engines.yaml",
+  "cpu": "Intel(R) Core(TM) Ultra 9 275HX",
+  "ram_gb": 15.3,
+  "gpu": "NVIDIA GeForce RTX 5070 Ti Laptop GPU, 595.79, 12227 MiB",
+  "models": [
+   {
+    "id": "vad.silero.v6",
+    "precision": "fp32",
+    "sha256": "1a153a22f450",
+    "license": "MIT"
+   },
+   {
+    "id": "speaker.ecapa.voxceleb",
+    "precision": "fp32",
+    "sha256": "f4f3668ae062",
+    "license": "Apache-2.0 (speechbrain/spkrec-ecapa-voxceleb)"
+   },
+   {
+    "id": "asr.whisper.base.q5_1",
+    "precision": "q5_1",
+    "sha256": "422f1ae452ad",
+    "license": "MIT"
+   },
+   {
+    "id": "emotion.acoustic.emotion2vec_plus_base",
+    "precision": "fp32",
+    "sha256": "6bc236251ec3",
+    "license": "FunASR model license (emotion2vec/emotion2vec_plus_base): attribution required"
+   },
+   {
+    "id": "emotion.lexical.distilroberta_en",
+    "precision": "int8",
+    "sha256": "327eb0811222",
+    "license": "none stated (j-hartmann/emotion-english-distilroberta-base): clear before shipping"
+   },
+   {
+    "id": "mt.nllb200.distilled600m.emo.int8",
+    "precision": "int8",
+    "sha256": "dd18b774814a",
+    "license": "CC-BY-NC-4.0 (non-commercial)"
+   },
+   {
+    "id": "tts.kokoro.82m.hi",
+    "precision": "fp32",
+    "sha256": "0e50eebba3bc",
+    "license": "Apache-2.0 (hexgrad/Kokoro-82M)"
+   }
+  ]
+ },
+ "settings": {
+  "runs": 5,
+  "devices": [
+   "cpu",
+   "auto"
+  ],
+  "set": []
+ },
+ "latency": {
+  "cpu": {
+   "jfk": [
+    {
+     "wall_s": 18.80799646700143,
+     "cpu_s": 46.885684,
+     "peak_rss_mb": 2260.96875,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 1.08,
+     "gpu_temp_c": 53.0,
+     "gpu_sm_mhz": 1500.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.265,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 243.711,
+       "p95": 356.351,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 223.231,
+       "p95": 442.619,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 0.535,
+       "p95": 4.905,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 215.039,
+       "p95": 282.623,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.01,
+       "p95": 0.012,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 266.239,
+       "p95": 336.78,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.615,
+       "p95": 778.239,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 1163.263,
+     "end_to_end_p95_ms": 1489.455,
+     "asr_rtf_p95": 0.3268,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    },
+    {
+     "wall_s": 18.766646975000185,
+     "cpu_s": 46.482682000000004,
+     "peak_rss_mb": 2236.4609375,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 1.95,
+     "gpu_temp_c": 54.0,
+     "gpu_sm_mhz": 1500.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.522,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 223.231,
+       "p95": 315.391,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 206.847,
+       "p95": 462.847,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 0.695,
+       "p95": 5.289,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 219.135,
+       "p95": 282.623,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.009,
+       "p95": 0.014,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 266.239,
+       "p95": 312.837,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.475,
+       "p95": 761.855,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 1196.031,
+     "end_to_end_p95_ms": 1458.175,
+     "asr_rtf_p95": 0.3295,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    },
+    {
+     "wall_s": 19.39801559300031,
+     "cpu_s": 46.490078,
+     "peak_rss_mb": 2261.90625,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 2.04,
+     "gpu_temp_c": 54.0,
+     "gpu_sm_mhz": 1507.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.214,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 231.423,
+       "p95": 354.584,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 215.039,
+       "p95": 453.815,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 0.347,
+       "p95": 3.935,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 210.943,
+       "p95": 289.724,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.008,
+       "p95": 0.01,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 260.095,
+       "p95": 315.391,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.427,
+       "p95": 709.971,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 1163.263,
+     "end_to_end_p95_ms": 1421.52,
+     "asr_rtf_p95": 0.3267,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    },
+    {
+     "wall_s": 21.263455096999678,
+     "cpu_s": 46.406465000000004,
+     "peak_rss_mb": 2255.25,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 2.21,
+     "gpu_temp_c": 55.0,
+     "gpu_sm_mhz": 7192.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.218,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 210.943,
+       "p95": 323.583,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 219.135,
+       "p95": 444.504,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 0.615,
+       "p95": 3.679,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 206.847,
+       "p95": 288.72,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.01,
+       "p95": 0.015,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 266.239,
+       "p95": 315.391,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.403,
+       "p95": 761.855,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 1130.495,
+     "end_to_end_p95_ms": 1453.203,
+     "asr_rtf_p95": 0.3295,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    },
+    {
+     "wall_s": 21.232817946998694,
+     "cpu_s": 46.60183,
+     "peak_rss_mb": 2232.3984375,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 2.5,
+     "gpu_temp_c": 55.0,
+     "gpu_sm_mhz": 0.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.277,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 215.039,
+       "p95": 356.351,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 206.847,
+       "p95": 469.155,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 0.519,
+       "p95": 3.231,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 215.039,
+       "p95": 282.623,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.009,
+       "p95": 0.012,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 266.239,
+       "p95": 323.583,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.323,
+       "p95": 712.703,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 1196.031,
+     "end_to_end_p95_ms": 1412.4,
+     "asr_rtf_p95": 0.3359,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    }
+   ],
+   "sentences": [
+    {
+     "wall_s": 20.124752195999463,
+     "cpu_s": 37.913299,
+     "peak_rss_mb": 2238.578125,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 2.05,
+     "gpu_temp_c": 55.0,
+     "gpu_sm_mhz": 712.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 174.079,
+       "p95": 178.175,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 210.943,
+       "p95": 221.325,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 178.175,
+       "p95": 206.847,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.241,
+       "p95": 0.307,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 243.711,
+       "p95": 323.583,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.01,
+       "p95": 0.023,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 307.199,
+       "p95": 315.391,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 380.927,
+       "p95": 1355.829,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 1392.639,
+     "end_to_end_p95_ms": 2195.455,
+     "asr_rtf_p95": 0.2975,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    },
+    {
+     "wall_s": 19.88643027299986,
+     "cpu_s": 37.968222,
+     "peak_rss_mb": 2248.23828125,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 1.95,
+     "gpu_temp_c": 54.0,
+     "gpu_sm_mhz": 1500.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 174.079,
+       "p95": 178.175,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 182.271,
+       "p95": 215.039,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 178.175,
+       "p95": 206.847,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.323,
+       "p95": 0.535,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 247.807,
+       "p95": 315.391,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.01,
+       "p95": 0.01,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 307.199,
+       "p95": 307.199,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 323.583,
+       "p95": 1282.712,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 1327.103,
+     "end_to_end_p95_ms": 2123.959,
+     "asr_rtf_p95": 0.3009,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    },
+    {
+     "wall_s": 19.72661593399971,
+     "cpu_s": 37.811167000000005,
+     "peak_rss_mb": 2237.8828125,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 2.4,
+     "gpu_temp_c": 55.0,
+     "gpu_sm_mhz": 705.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 174.079,
+       "p95": 178.175,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 215.039,
+       "p95": 219.135,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 178.175,
+       "p95": 202.751,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.323,
+       "p95": 0.464,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 255.999,
+       "p95": 319.58,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.01,
+       "p95": 0.011,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 299.007,
+       "p95": 320.886,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 397.311,
+       "p95": 1359.871,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 1392.639,
+     "end_to_end_p95_ms": 2195.455,
+     "asr_rtf_p95": 0.2948,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    },
+    {
+     "wall_s": 17.17562597899996,
+     "cpu_s": 37.843858999999995,
+     "peak_rss_mb": 2234.86328125,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 2.38,
+     "gpu_temp_c": 55.0,
+     "gpu_sm_mhz": 705.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 174.079,
+       "p95": 178.175,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 210.943,
+       "p95": 221.43,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 178.175,
+       "p95": 246.513,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.339,
+       "p95": 0.483,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 251.903,
+       "p95": 315.391,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.01,
+       "p95": 0.011,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 307.199,
+       "p95": 313.634,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 356.351,
+       "p95": 1359.871,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 1392.639,
+     "end_to_end_p95_ms": 2195.455,
+     "asr_rtf_p95": 0.2975,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    },
+    {
+     "wall_s": 20.395173773998977,
+     "cpu_s": 37.975435,
+     "peak_rss_mb": 2242.29296875,
+     "gpu_mem_mb": 0.0,
+     "load_1m": 2.69,
+     "gpu_temp_c": 55.0,
+     "gpu_sm_mhz": 1455.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 174.079,
+       "p95": 178.175,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 182.271,
+       "p95": 209.853,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 182.271,
+       "p95": 243.711,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.519,
+       "p95": 0.695,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 251.903,
+       "p95": 323.217,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.01,
+       "p95": 0.014,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 307.199,
+       "p95": 307.199,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 290.815,
+       "p95": 1319.759,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 1327.103,
+     "end_to_end_p95_ms": 2129.919,
+     "asr_rtf_p95": 0.3087,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    }
+   ]
+  },
+  "auto": {
+   "jfk": [
+    {
+     "wall_s": 17.333822122998754,
+     "cpu_s": 6.414298,
+     "peak_rss_mb": 2011.6640625,
+     "gpu_mem_mb": 2970.0,
+     "load_1m": 2.23,
+     "gpu_temp_c": 54.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.207,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 62.975,
+       "p95": 129.192,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 37.375,
+       "p95": 144.894,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 1.199,
+       "p95": 51.711,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 49.663,
+       "p95": 84.991,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.007,
+       "p95": 0.011,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 56.831,
+       "p95": 92.492,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.331,
+       "p95": 315.391,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 380.985,
+     "end_to_end_p95_ms": 630.783,
+     "asr_rtf_p95": 0.0807,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    },
+    {
+     "wall_s": 23.428093049999006,
+     "cpu_s": 6.6139,
+     "peak_rss_mb": 1970.1953125,
+     "gpu_mem_mb": 2956.0,
+     "load_1m": 1.81,
+     "gpu_temp_c": 53.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.264,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 59.903,
+       "p95": 180.391,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 32.511,
+       "p95": 296.841,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 0.727,
+       "p95": 17.493,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 53.759,
+       "p95": 84.991,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.007,
+       "p95": 0.009,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 57.855,
+       "p95": 93.183,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.419,
+       "p95": 315.391,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 389.119,
+     "end_to_end_p95_ms": 628.144,
+     "asr_rtf_p95": 0.0871,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    },
+    {
+     "wall_s": 16.965636089998952,
+     "cpu_s": 6.3665009999999995,
+     "peak_rss_mb": 2010.6484375,
+     "gpu_mem_mb": 2952.0,
+     "load_1m": 1.25,
+     "gpu_temp_c": 52.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.204,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 61.951,
+       "p95": 165.887,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 40.447,
+       "p95": 157.695,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 0.467,
+       "p95": 57.383,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 52.735,
+       "p95": 82.707,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.008,
+       "p95": 0.008,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 58.879,
+       "p95": 94.857,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.267,
+       "p95": 315.391,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 380.927,
+     "end_to_end_p95_ms": 630.783,
+     "asr_rtf_p95": 0.0855,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    },
+    {
+     "wall_s": 16.877651546999914,
+     "cpu_s": 6.811435,
+     "peak_rss_mb": 1968.6171875,
+     "gpu_mem_mb": 2950.0,
+     "load_1m": 0.97,
+     "gpu_temp_c": 52.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.181,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 60.927,
+       "p95": 181.211,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 33.279,
+       "p95": 311.556,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 0.551,
+       "p95": 39.947,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 53.759,
+       "p95": 83.99,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.007,
+       "p95": 0.008,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 55.807,
+       "p95": 94.736,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.291,
+       "p95": 331.775,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 389.119,
+     "end_to_end_p95_ms": 647.167,
+     "asr_rtf_p95": 0.0871,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    },
+    {
+     "wall_s": 17.268261782999616,
+     "cpu_s": 6.526281,
+     "peak_rss_mb": 1977.20703125,
+     "gpu_mem_mb": 2954.0,
+     "load_1m": 0.98,
+     "gpu_temp_c": 52.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 11.0,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 165.887,
+       "p95": 172.183,
+       "target": 160.0,
+       "count": 4
+      },
+      "Emotion fusion": {
+       "p50": 61.951,
+       "p95": 115.711,
+       "target": 40.0,
+       "count": 4
+      },
+      "ASR final decode": {
+       "p50": 38.399,
+       "p95": 145.407,
+       "target": 220.0,
+       "count": 4
+      },
+      "Emotion state": {
+       "p50": 0.395,
+       "p95": 48.639,
+       "target": 10.0,
+       "count": 4
+      },
+      "Translation, final pass": {
+       "p50": 50.687,
+       "p95": 91.135,
+       "target": 120.0,
+       "count": 4
+      },
+      "Emotion controller": {
+       "p50": 0.008,
+       "p95": 0.009,
+       "target": 5.0,
+       "count": 4
+      },
+      "TTS first chunk": {
+       "p50": 57.855,
+       "p95": 89.023,
+       "target": 160.0,
+       "count": 4
+      },
+      "Playout buffer": {
+       "p50": 0.387,
+       "p95": 315.391,
+       "target": 60.0,
+       "count": 4
+      }
+     },
+     "end_to_end_p50_ms": 389.119,
+     "end_to_end_p95_ms": 628.24,
+     "asr_rtf_p95": 0.0836,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "And so my fellow Americans. ASK NOT! what your country can do for you! Ask what you can do for your country."
+    }
+   ],
+   "sentences": [
+    {
+     "wall_s": 15.719789278000462,
+     "cpu_s": 5.588481999999999,
+     "peak_rss_mb": 1978.19921875,
+     "gpu_mem_mb": 2962.0,
+     "load_1m": 0.97,
+     "gpu_temp_c": 52.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 169.983,
+       "p95": 173.621,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 84.991,
+       "p95": 109.54,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 89.087,
+       "p95": 109.567,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.583,
+       "p95": 0.583,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 70.655,
+       "p95": 94.388,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.009,
+       "p95": 0.011,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 56.831,
+       "p95": 89.087,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 405.503,
+       "p95": 1261.567,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 843.775,
+     "end_to_end_p95_ms": 1649.818,
+     "asr_rtf_p95": 0.0583,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    },
+    {
+     "wall_s": 15.723789179999585,
+     "cpu_s": 5.584018,
+     "peak_rss_mb": 2012.3359375,
+     "gpu_mem_mb": 2952.0,
+     "load_1m": 0.76,
+     "gpu_temp_c": 52.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 169.983,
+       "p95": 173.584,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 84.991,
+       "p95": 125.068,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 43.519,
+       "p95": 125.274,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.315,
+       "p95": 0.663,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 72.703,
+       "p95": 100.645,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.008,
+       "p95": 0.009,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 58.879,
+       "p95": 91.135,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 380.927,
+       "p95": 1261.567,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 843.775,
+     "end_to_end_p95_ms": 1647.841,
+     "asr_rtf_p95": 0.0583,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    },
+    {
+     "wall_s": 15.89396396599841,
+     "cpu_s": 5.605090000000001,
+     "peak_rss_mb": 1971.0625,
+     "gpu_mem_mb": 2956.0,
+     "load_1m": 0.74,
+     "gpu_temp_c": 52.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 169.983,
+       "p95": 173.554,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 82.943,
+       "p95": 100.506,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 78.847,
+       "p95": 106.582,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.459,
+       "p95": 0.693,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 72.703,
+       "p95": 96.268,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.011,
+       "p95": 0.019,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 59.903,
+       "p95": 93.183,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 430.079,
+       "p95": 1294.335,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 860.159,
+     "end_to_end_p95_ms": 1676.375,
+     "asr_rtf_p95": 0.0594,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    },
+    {
+     "wall_s": 15.837667671999952,
+     "cpu_s": 5.7344919999999995,
+     "peak_rss_mb": 2048.78515625,
+     "gpu_mem_mb": 2950.0,
+     "load_1m": 0.64,
+     "gpu_temp_c": 52.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 169.983,
+       "p95": 173.559,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 91.135,
+       "p95": 130.047,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 80.895,
+       "p95": 130.047,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.387,
+       "p95": 0.726,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 76.799,
+       "p95": 101.375,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.008,
+       "p95": 0.008,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 56.831,
+       "p95": 93.183,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 421.887,
+       "p95": 1313.899,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 892.927,
+     "end_to_end_p95_ms": 1687.241,
+     "asr_rtf_p95": 0.0546,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    },
+    {
+     "wall_s": 15.815103612001622,
+     "cpu_s": 5.580583,
+     "peak_rss_mb": 1977.78125,
+     "gpu_mem_mb": 2962.0,
+     "load_1m": 0.52,
+     "gpu_temp_c": 52.0,
+     "gpu_sm_mhz": 180.0,
+     "audio_s": 10.195238095238095,
+     "rows": {
+      "VAD endpoint hangover": {
+       "p50": 169.983,
+       "p95": 173.632,
+       "target": 160.0,
+       "count": 3
+      },
+      "Emotion fusion": {
+       "p50": 87.039,
+       "p95": 99.327,
+       "target": 40.0,
+       "count": 3
+      },
+      "ASR final decode": {
+       "p50": 47.615,
+       "p95": 107.519,
+       "target": 220.0,
+       "count": 3
+      },
+      "Emotion state": {
+       "p50": 0.347,
+       "p95": 0.871,
+       "target": 10.0,
+       "count": 3
+      },
+      "Translation, final pass": {
+       "p50": 70.655,
+       "p95": 95.231,
+       "target": 120.0,
+       "count": 3
+      },
+      "Emotion controller": {
+       "p50": 0.008,
+       "p95": 0.009,
+       "target": 5.0,
+       "count": 3
+      },
+      "TTS first chunk": {
+       "p50": 56.831,
+       "p95": 92.226,
+       "target": 160.0,
+       "count": 3
+      },
+      "Playout buffer": {
+       "p50": 405.503,
+       "p95": 1261.567,
+       "target": 60.0,
+       "count": 3
+      }
+     },
+     "end_to_end_p50_ms": 843.775,
+     "end_to_end_p95_ms": 1653.402,
+     "asr_rtf_p95": 0.0551,
+     "dropout_samples": 0.0,
+     "wer": 0.0,
+     "transcript": "I can't believe you did this. I'm so sorry I didn't mean to hurt you. This is amazing. Thank you so much."
+    }
+   ]
+  }
+ },
+ "transfer": {
+  "device": "auto",
+  "clips": 48,
+  "runs": [
+   {
+    "wer": 0.041666666666666664,
+    "peak_rss_mb": 2038.91015625,
+    "gpu_mem_mb": 2874.0,
+    "ecs_mean": 0.8244735446511483,
+    "ecs_share_above_target": 0.8163265306122449,
+    "input_emotion_accuracy": 0.6274509803921569,
+    "output_label_agreement": 0.3877551020408163,
+    "output_non_neutral_share": 0.24489795918367346,
+    "arousal_ccc_in_out": 0.07941333907415878,
+    "ecs_anger": 0.7709387445449829,
+    "ecs_calm": 0.8967137783765793,
+    "ecs_fear": 0.7946094733018142,
+    "ecs_joy": 0.8091256817181905,
+    "ecs_neutral": 0.9321030030647913,
+    "ecs_sadness": 0.8229583849509557,
+    "ecs_surprise": 0.8053504526615143
+   },
+   {
+    "wer": 0.041666666666666664,
+    "peak_rss_mb": 2049.8671875,
+    "gpu_mem_mb": 2886.0,
+    "ecs_mean": 0.8235013053125265,
+    "ecs_share_above_target": 0.8061224489795918,
+    "input_emotion_accuracy": 0.6274509803921569,
+    "output_label_agreement": 0.3877551020408163,
+    "output_non_neutral_share": 0.25510204081632654,
+    "arousal_ccc_in_out": 0.1009842406493452,
+    "ecs_anger": 0.7741634464263916,
+    "ecs_calm": 0.8951381097237269,
+    "ecs_fear": 0.7901898989310632,
+    "ecs_joy": 0.7953687955935796,
+    "ecs_neutral": 0.9320096572240194,
+    "ecs_sadness": 0.8284546782573065,
+    "ecs_surprise": 0.805409848690033
+   },
+   {
+    "wer": 0.041666666666666664,
+    "peak_rss_mb": 2043.21875,
+    "gpu_mem_mb": 3392.0,
+    "ecs_mean": 0.823465783377083,
+    "ecs_share_above_target": 0.8061224489795918,
+    "input_emotion_accuracy": 0.6274509803921569,
+    "output_label_agreement": 0.40816326530612246,
+    "output_non_neutral_share": 0.24489795918367346,
+    "arousal_ccc_in_out": 0.08520940646940713,
+    "ecs_anger": 0.7791078877449036,
+    "ecs_calm": 0.8953883399566015,
+    "ecs_fear": 0.7825629160954402,
+    "ecs_joy": 0.7965257416168848,
+    "ecs_neutral": 0.9319553772608439,
+    "ecs_sadness": 0.8247405290603638,
+    "ecs_surprise": 0.8054426511128744
+   },
+   {
+    "wer": 0.041666666666666664,
+    "peak_rss_mb": 2120.08203125,
+    "gpu_mem_mb": 2874.0,
+    "ecs_mean": 0.8243904107687424,
+    "ecs_share_above_target": 0.7959183673469388,
+    "input_emotion_accuracy": 0.6274509803921569,
+    "output_label_agreement": 0.3979591836734694,
+    "output_non_neutral_share": 0.24489795918367346,
+    "arousal_ccc_in_out": 0.07114628110806684,
+    "ecs_anger": 0.7787786149978637,
+    "ecs_calm": 0.8950371444225311,
+    "ecs_fear": 0.7989491591086755,
+    "ecs_joy": 0.7931797405083975,
+    "ecs_neutral": 0.9320070842901865,
+    "ecs_sadness": 0.8188827683528265,
+    "ecs_surprise": 0.8054312467575073
+   },
+   {
+    "wer": 0.041666666666666664,
+    "peak_rss_mb": 2120.39453125,
+    "gpu_mem_mb": 2878.0,
+    "ecs_mean": 0.8173947182236886,
+    "ecs_share_above_target": 0.7857142857142857,
+    "input_emotion_accuracy": 0.6274509803921569,
+    "output_label_agreement": 0.40816326530612246,
+    "output_non_neutral_share": 0.22448979591836735,
+    "arousal_ccc_in_out": 0.08713933670605423,
+    "ecs_anger": 0.7679751014709473,
+    "ecs_calm": 0.891512081027031,
+    "ecs_fear": 0.7938031004025385,
+    "ecs_joy": 0.7624234308799108,
+    "ecs_neutral": 0.9319522430499395,
+    "ecs_sadness": 0.8241491764783859,
+    "ecs_surprise": 0.8054517805576324
+   }
+  ]
+ },
+ "emotion": {
+  "device": "auto",
+  "ravdess": {
+   "emotion_uar": 0.8009672619047619,
+   "emotion_f1": 0.7325342414912185,
+   "emotion_accuracy": 0.8131944444444444,
+   "ccc_valence": 0.8576645912690497,
+   "ccc_arousal": 0.8441796079212036,
+   "ccc_dominance": 0.8344220295367966,
+   "items": 1440,
+   "wall_s": 151.48079984099968
+  },
+  "meld": {
+   "emotion_uar": 0.4308609491747158,
+   "emotion_f1": 0.4079372792460525,
+   "emotion_accuracy": 0.553639846743295,
+   "ccc_valence": 0.38895918830581894,
+   "ccc_arousal": 0.4126021181408918,
+   "ccc_dominance": 0.2773890733770169,
+   "items": 2610,
+   "wall_s": 19.25951657800033
+  }
+ },
+ "mt": {
+  "model": "mt.nllb200.distilled600m.emo.int8",
+  "cpu": {
+   "chrf": 56.722155412432166,
+   "bleu": 31.46793097542114,
+   "leak_rate": 0.0
+  },
+  "auto": {
+   "chrf": 56.701064846109084,
+   "bleu": 31.35170673732632,
+   "leak_rate": 0.0
+  }
+ },
+ "overhead": [
+  {
+   "asr_rtf": {
+    "p50": 0.0,
+    "p95": 0.0
+   },
+   "config": "config/pipeline.yaml",
+   "dropout_samples": 0,
+   "ecs": {
+    "count": 15,
+    "mean": 0.8080466666666666
+   },
+   "end_to_end_ms": {
+    "count": 14,
+    "p50": 174.079,
+    "p95": 182.271
+   },
+   "mode": "realtime",
+   "peak_rss_mb": 53.99609375,
+   "rows": [
+    {
+     "count": 14,
+     "p50_ms": 169.983,
+     "p95_ms": 174.079,
+     "row": "VAD endpoint hangover",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 2.399,
+     "p95_ms": 3.423,
+     "row": "Emotion fusion",
+     "target_ms": 40.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.307,
+     "p95_ms": 0.563,
+     "row": "ASR final decode",
+     "target_ms": 220.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.419,
+     "p95_ms": 0.595,
+     "row": "Emotion state",
+     "target_ms": 10.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.025,
+     "p95_ms": 0.031,
+     "row": "Translation, final pass",
+     "target_ms": 120.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.006,
+     "p95_ms": 0.016,
+     "row": "Emotion controller",
+     "target_ms": 5.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 4.287,
+     "p95_ms": 8.268,
+     "row": "TTS first chunk",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.233,
+     "p95_ms": 0.519,
+     "row": "Playout buffer",
+     "target_ms": 60.0
+    }
+   ],
+   "targets_met": true,
+   "utterances": 14
+  },
+  {
+   "asr_rtf": {
+    "p50": 0.0,
+    "p95": 0.0
+   },
+   "config": "config/pipeline.yaml",
+   "dropout_samples": 0,
+   "ecs": {
+    "count": 15,
+    "mean": 0.8080466666666666
+   },
+   "end_to_end_ms": {
+    "count": 14,
+    "p50": 174.079,
+    "p95": 182.271
+   },
+   "mode": "realtime",
+   "peak_rss_mb": 54.0078125,
+   "rows": [
+    {
+     "count": 14,
+     "p50_ms": 169.983,
+     "p95_ms": 174.079,
+     "row": "VAD endpoint hangover",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 2.463,
+     "p95_ms": 3.295,
+     "row": "Emotion fusion",
+     "target_ms": 40.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.291,
+     "p95_ms": 0.535,
+     "row": "ASR final decode",
+     "target_ms": 220.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.221,
+     "p95_ms": 0.561,
+     "row": "Emotion state",
+     "target_ms": 10.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.023,
+     "p95_ms": 0.03,
+     "row": "Translation, final pass",
+     "target_ms": 120.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.006,
+     "p95_ms": 0.009,
+     "row": "Emotion controller",
+     "target_ms": 5.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 3.935,
+     "p95_ms": 7.94,
+     "row": "TTS first chunk",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.169,
+     "p95_ms": 0.507,
+     "row": "Playout buffer",
+     "target_ms": 60.0
+    }
+   ],
+   "targets_met": true,
+   "utterances": 14
+  },
+  {
+   "asr_rtf": {
+    "p50": 0.0,
+    "p95": 0.0
+   },
+   "config": "config/pipeline.yaml",
+   "dropout_samples": 0,
+   "ecs": {
+    "count": 15,
+    "mean": 0.8080466666666666
+   },
+   "end_to_end_ms": {
+    "count": 14,
+    "p50": 174.079,
+    "p95": 182.271
+   },
+   "mode": "realtime",
+   "peak_rss_mb": 53.8515625,
+   "rows": [
+    {
+     "count": 14,
+     "p50_ms": 169.983,
+     "p95_ms": 174.079,
+     "row": "VAD endpoint hangover",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 2.399,
+     "p95_ms": 3.73,
+     "row": "Emotion fusion",
+     "target_ms": 40.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.355,
+     "p95_ms": 0.567,
+     "row": "ASR final decode",
+     "target_ms": 220.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.299,
+     "p95_ms": 1.098,
+     "row": "Emotion state",
+     "target_ms": 10.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.022,
+     "p95_ms": 0.04,
+     "row": "Translation, final pass",
+     "target_ms": 120.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.006,
+     "p95_ms": 0.012,
+     "row": "Emotion controller",
+     "target_ms": 5.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 3.871,
+     "p95_ms": 7.743,
+     "row": "TTS first chunk",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.379,
+     "p95_ms": 0.564,
+     "row": "Playout buffer",
+     "target_ms": 60.0
+    }
+   ],
+   "targets_met": true,
+   "utterances": 14
+  },
+  {
+   "asr_rtf": {
+    "p50": 0.0,
+    "p95": 0.0
+   },
+   "config": "config/pipeline.yaml",
+   "dropout_samples": 0,
+   "ecs": {
+    "count": 15,
+    "mean": 0.8080466666666666
+   },
+   "end_to_end_ms": {
+    "count": 14,
+    "p50": 174.079,
+    "p95": 182.271
+   },
+   "mode": "realtime",
+   "peak_rss_mb": 54.09765625,
+   "rows": [
+    {
+     "count": 14,
+     "p50_ms": 169.983,
+     "p95_ms": 174.079,
+     "row": "VAD endpoint hangover",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 2.271,
+     "p95_ms": 3.423,
+     "row": "Emotion fusion",
+     "target_ms": 40.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.283,
+     "p95_ms": 0.491,
+     "row": "ASR final decode",
+     "target_ms": 220.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.331,
+     "p95_ms": 0.567,
+     "row": "Emotion state",
+     "target_ms": 10.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.027,
+     "p95_ms": 0.041,
+     "row": "Translation, final pass",
+     "target_ms": 120.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.006,
+     "p95_ms": 0.008,
+     "row": "Emotion controller",
+     "target_ms": 5.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 3.871,
+     "p95_ms": 7.743,
+     "row": "TTS first chunk",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.291,
+     "p95_ms": 0.562,
+     "row": "Playout buffer",
+     "target_ms": 60.0
+    }
+   ],
+   "targets_met": true,
+   "utterances": 14
+  },
+  {
+   "asr_rtf": {
+    "p50": 0.0,
+    "p95": 0.0
+   },
+   "config": "config/pipeline.yaml",
+   "dropout_samples": 0,
+   "ecs": {
+    "count": 15,
+    "mean": 0.8080466666666666
+   },
+   "end_to_end_ms": {
+    "count": 14,
+    "p50": 174.079,
+    "p95": 182.271
+   },
+   "mode": "realtime",
+   "peak_rss_mb": 53.86328125,
+   "rows": [
+    {
+     "count": 14,
+     "p50_ms": 169.983,
+     "p95_ms": 174.079,
+     "row": "VAD endpoint hangover",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 2.335,
+     "p95_ms": 3.224,
+     "row": "Emotion fusion",
+     "target_ms": 40.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.307,
+     "p95_ms": 0.55,
+     "row": "ASR final decode",
+     "target_ms": 220.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.403,
+     "p95_ms": 0.583,
+     "row": "Emotion state",
+     "target_ms": 10.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.025,
+     "p95_ms": 0.046,
+     "row": "Translation, final pass",
+     "target_ms": 120.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.006,
+     "p95_ms": 0.01,
+     "row": "Emotion controller",
+     "target_ms": 5.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 3.871,
+     "p95_ms": 8.208,
+     "row": "TTS first chunk",
+     "target_ms": 160.0
+    },
+    {
+     "count": 14,
+     "p50_ms": 0.253,
+     "p95_ms": 0.56,
+     "row": "Playout buffer",
+     "target_ms": 60.0
+    }
+   ],
+   "targets_met": true,
+   "utterances": 14
+  }
+ ]
+}
