@@ -169,6 +169,34 @@ class ControllerSearchTest(unittest.TestCase):
         self.assertEqual(lc.scaled(r, 0.0), lc.NEUTRAL)
 
 
+class BenchmarkReportTest(unittest.TestCase):
+    def test_ranges_and_target_verdicts(self):
+        import benchmark
+
+        self.assertEqual(benchmark.span([406.2, 365.4]), "365–406")
+        self.assertEqual(benchmark.span([0.0421, 0.0424], 3), "0.042")  # equal at this precision
+        self.assertEqual(benchmark.span([None]), "–")
+        self.assertEqual(benchmark.spread([631.0, 614.4, 627.8]), "628 (614–631)")
+        self.assertEqual(benchmark.spread([614.4, 631.0]), "614–631")  # too few runs for a median
+
+        def run(e2e_p95):
+            return {"rows": {"ASR final decode": {"p50": 35.0, "p95": 60.0, "target": 220.0}},
+                    "end_to_end_p50_ms": e2e_p95 - 200, "end_to_end_p95_ms": e2e_p95, "asr_rtf_p95": 0.03,
+                    "peak_rss_mb": 2048.0, "dropout_samples": 0.0, "cpu_s": 11.0, "audio_s": 11.0,
+                    "gpu_mem_mb": 1500.0, "wer": 0.0}
+
+        results = {"environment": {"commit": "abc"}, "settings": {"runs": 2},
+                   "latency": {"cpu": {"jfk": [run(1600), run(1650)]},
+                               "auto": {"jfk": [run(611), run(631)], "sentences": [run(900), run(950)]}},
+                   "transfer": {"device": "auto", "clips": 48, "runs": [{"wer": 0.042, "ecs_mean": 0.82}]}}
+        report = benchmark.render(results)
+        self.assertIn("| End to end p95, jfk.wav (real time) | < 800 ms | 1600–1650 ms, **missed** | 611–631 ms, met |",
+                      report)
+        self.assertIn("| Emotion consistency (ECS), RAVDESS | ≥ 0.75 | – | 0.820, met |", report)
+        self.assertIn("| ASR final decode | 220 ms | 35 | 60 | 35 | 60 |", report)
+        self.assertIn("| ASR WER | RAVDESS, 48 clips | 0.042 |", report)
+
+
 class MtCorpusTest(unittest.TestCase):
     def test_cleaning_filters_and_label_coverage(self):
         from data import build_mt_corpus as corpus

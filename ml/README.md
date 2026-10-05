@@ -9,7 +9,7 @@ device (blueprint: "Python exists only in the offline factory").
 | P2 Train & fine-tune | emotion2vec head → V·A·D; NLLB LoRA + emotion tokens | `train/train_vad_head.py`, `train/finetune_nllb_lora.py` |
 | P3 Compress | distillation, INT8 PTQ/QAT, pruning, ONNX simplify | `distill/quantize_onnx.py`; INT8 kept only where it does not change decisions (see the exports) |
 | P4 Export | torch.onnx / Optimum, CT2 converter, GGML quantize, sign + write manifest | `export/*`: `export_emotion2vec_onnx.py`, `export_lexical_onnx.py`, `export_acoustic_onnx.py`, … |
-| P5 Evaluate | WER · COMET · BLEU · emotion F1 · CCC · ECS · latency | `emotionedge_ml/metrics.py`, `eval/eval_emotion.py`, `eval/quality_gate.py` |
+| P5 Evaluate | WER · COMET · BLEU · emotion F1 · CCC · ECS · latency | `emotionedge_ml/metrics.py`, `eval/eval_emotion.py`, `eval/quality_gate.py`, `eval/benchmark.py` |
 
 ## Contracts with the C++ core
 
@@ -69,6 +69,30 @@ Caveats:
 - emotion2vec+ has no "calm" class, so RAVDESS calm lands on neutral.
 - RAVDESS may be in emotion2vec+'s pseudo-labelling seed data, so its UAR may be optimistic.
 - DistilRoBERTa was trained on MELD's training split, not its test split.
+
+## Benchmark report (P5)
+
+`eval/benchmark.py` re-measures, in one command, what the gate and the README quote. It runs on
+the real engines, on each device, several times over, and writes it all up with the machine and
+the model hashes:
+
+```bash
+python ml/eval/benchmark.py run --emotionedge build/engines/apps/emotionedge \
+    --manifest models/manifest.json --data data --out out/benchmark --runs 5 --devices cpu auto \
+    --python .venv/bin/python --ee-bench build/release/bench/ee_bench
+python ml/eval/benchmark.py report --results out/benchmark/results.json --out docs/benchmark.md
+```
+
+- **Latency:** real-time runs of jfk.wav and three back-to-back sentences, per device. It reports
+  the budget rows, end to end, ASR WER, peak RAM, CPU time and GPU memory, and the machine's state
+  as each run starts.
+- **Emotion transfer** on the 48 RAVDESS clips (`eval_ecs.py`), plus ASR WER.
+- **Emotion recognition** on RAVDESS and MELD (`eval_emotion.py`).
+- **Translation:** FLORES chrF/BLEU (`eval_mt.py`).
+- **Runtime overhead:** `ee_bench` on the stand-in engines.
+
+`results.json` keeps every run. The report gives each value as a range, with the median for the
+latency targets. [docs/benchmark.md](../docs/benchmark.md) is the current one.
 
 ## NLLB emotion-token LoRA (P2)
 

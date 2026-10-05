@@ -93,6 +93,7 @@ spinning whisper workers pinned to one core, the real-time pipeline stalled.
 `ee_bench` measures every row from per-utterance milestones (`telemetry/telemetry.cpp`). The
 table below is the real-time paced run over 9 utterances (Release build on a WSL2 x86-64 dev
 machine, stand-in engines). It measures the runtime's own overhead, not the neural engines.
+[benchmark.md](benchmark.md) has the same rows for the real engines, on CPU and GPU.
 
 | Row | Budget | p50 | p95 |
 |---|---|---|---|
