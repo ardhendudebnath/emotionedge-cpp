@@ -125,6 +125,34 @@ jobs:
           build/apps/emotionedge models list
           build/apps/emotionedge demo --out "$RUNNER_TEMP/walkthrough"
 
+  desktop:
+    name: linux / desktop app
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System packages (X11 headers for GLFW, Xvfb and Mesa to run it headless)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libxext-dev xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON -DEE_WITH_MINIAUDIO=ON -DEE_WITH_DESKTOP=ON
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 2
+      - name: Run it headless (stand-in engines, demo conversation) and keep a screenshot
+        run: |
+          build/apps/emotionedge demo --conversation --out "$RUNNER_TEMP/demo"
+          xvfb-run -a -s "-screen 0 1400x900x24" build/apps/emotionedge-desktop --config config/pipeline.yaml \
+            --set asr.engine=scripted --set asr.script="$RUNNER_TEMP/demo/input.script.json" \
+            --input "$RUNNER_TEMP/demo/input.wav" --mute --screenshot "$RUNNER_TEMP/desktop.png"
+          test -s "$RUNNER_TEMP/desktop.png"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-screenshot
+          path: ${{ runner.temp }}/desktop.png
+
   python:
     name: ml factory (python)
     runs-on: ubuntu-24.04

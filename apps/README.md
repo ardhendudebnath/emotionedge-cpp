@@ -14,6 +14,7 @@ emotionedge say --engine piper --model-id tts.piper.en_US.lessac.medium --text "
 emotionedge models verify             # SHA-256 check of models/manifest.json
 emotionedge stages                    # registered stage types
 emotionedge serve --port 8080         # WebSocket server, one live session per connection (-DEE_WITH_WEBSOCKET=ON)
+emotionedge-desktop                   # desktop app: live captions, emotion, latency (-DEE_WITH_DESKTOP=ON)
 emotionedge run --input speech.wav --config config/pipeline.engines.yaml --realtime --echo-sim -6 \
     --set frontend.record=out/echo/run   # what an open loudspeaker would do, recorded
 ```
@@ -99,7 +100,40 @@ Limits:
   proxy in front of it before exposing it.
 - **A client that stops reading** stalls its own session's playback.
 
+## `emotionedge-desktop` (desktop app, 5.3)
+
+![The desktop app after three sentences, real engines on an RTX 5070 Ti](../docs/images/desktop.png)
+
+One window with the pipeline in-process:
+- the captions: what was said, the emotion read from the voice (label and V·A·D), the Hindi as
+  it is drafted and then finalized, and the ECS of the speech that played, with the emotion each
+  clause sounded like;
+- the latency budget, live: p50 and p95 per stage against the blueprint's budget, the
+  translation queued to play, and dropouts;
+- the microphone and speaker, and Listen / Play file / Stop.
+
+Built with `-DEE_WITH_MINIAUDIO=ON -DEE_WITH_DESKTOP=ON`. It needs the X11 development headers
+(apt: `libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev`). Wayland desktops,
+WSLg included, run it through XWayland.
+
+```bash
+emotionedge-desktop --config config/pipeline.engines.yaml        # then Listen, or Play file
+emotionedge-desktop --input speech.wav --mute --screenshot shot.png  # render one frame and exit
+```
+
+Hindi needs text shaping: vowel signs reorder and consonants join into conjuncts. Dear ImGui
+does not do that. So HarfBuzz 14.5.1 (MIT) shapes each caption, and the glyphs are rasterized
+by index into a texture ImGui draws from (`apps/desktop/shaped_text.cpp`). Dear ImGui v1.92.9b
+(MIT), GLFW 3.5.1 (zlib) and HarfBuzz are fetched at pinned, hash-verified versions. So is Noto
+Sans Devanagari (SIL Open Font License 1.1), the font for both scripts; the build puts its
+license next to it.
+
+`--screenshot` renders into a hidden window and saves a frame, by default one second after the
+session ends. That is how the UI is checked without a person at the screen. CI runs it under
+Xvfb on the stand-in engines and keeps the image. The microphone path is the same as
+`emotionedge live`; it was not exercised for this change.
+
 ## Planned (roadmap phase 5 "Ship")
 
-- **Desktop UI** (Dear ImGui): live captions with emotion tags, device selection, latency panel.
 - **gRPC** next to the WebSocket API, for typed clients.
+- **Android and Jetson** builds.

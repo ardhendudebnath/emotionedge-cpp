@@ -15,6 +15,7 @@
 #include "core/audio/pitch.hpp"
 #include "core/audio/resampler.hpp"
 #include "core/pipeline/demo.hpp"
+#include "core/pipeline/live_view.hpp"
 #include "core/pipeline/session.hpp"
 #include "core/translate/languages.hpp"
 
@@ -213,6 +214,55 @@ TEST(PipelineE2E, PublishesEachResultAsALiveEvent) {
     EXPECT_TRUE(events[scored]["heard"].contains("label"));
     EXPECT_GT(events[played]["end"].get<double>(), events[played]["start"].get<double>());
     for (const json& e : events) EXPECT_EQ(e["utterance"].get<std::uint64_t>(), id) << e.dump();
+}
+
+// The UI model behind the desktop app: drafts give way to finals and never come back.
+TEST(LiveView, KeepsTheLatestTextAndNeverReturnsToADraft) {
+    LiveView view;
+    view.on_event(R"({"type":"transcript","utterance":3,"final":false,"text":"I can't","start":1.0,"end":1.5})");
+    view.on_event(R"({"type":"translation","utterance":3,"final":false,"text":"मैं"})");
+    view.on_event(R"({"type":"transcript","utterance":3,"final":true,"text":"I can't believe it","start":1.0,"end":2.2})");
+    view.on_event(R"({"type":"transcript","utterance":3,"final":false,"text":"I can't be"})");  // late partial
+    view.on_event(R"({"type":"translation","utterance":3,"final":true,"text":"मुझे यकीन नहीं"})");
+    view.on_event(R"({"type":"emotion","utterance":3,"label":"anger","valence":-0.6,"arousal":0.7,)"
+                  R"("dominance":0.5,"confidence":0.9,"emphasis":["believe"]})");
+    view.on_event(R"({"type":"consistency","utterance":3,"ecs":0.82,"heard":{"label":"neutral"}})");
+    view.on_event(R"({"type":"playout","utterance":3,"start":2.6,"end":4.1})");
+    view.on_event(R"({"type":"ready"})");  // not tied to an utterance: ignored
+    view.on_event("not json");
+
+    const auto utterances = view.snapshot();
+    ASSERT_EQ(utterances.size(), 1u);
+    const LiveView::Utterance& u = utterances[0];
+    EXPECT_EQ(u.source, "I can't believe it");
+    EXPECT_TRUE(u.source_final);
+    EXPECT_DOUBLE_EQ(u.src_end, 2.2);
+    EXPECT_EQ(u.translation, "मुझे यकीन नहीं");
+    EXPECT_TRUE(u.translation_final);
+    EXPECT_EQ(u.emotion, "anger");
+    EXPECT_FLOAT_EQ(u.arousal, 0.7f);
+    EXPECT_EQ(u.emphasis, std::vector<std::string>{"believe"});
+    EXPECT_EQ(u.ecs, std::vector<float>{0.82f});
+    EXPECT_EQ(u.heard, std::vector<std::string>{"neutral"});
+    EXPECT_DOUBLE_EQ(u.out_start, 2.6);
+    EXPECT_EQ(view.version(), 7u);  // the late partial and the two non-events do not count
+    view.clear();
+    EXPECT_TRUE(view.snapshot().empty());
+}
+
+TEST(LiveView, FollowsARealSession) {
+    const fs::path dir = fresh_dir("live_view");
+    LiveView view;
+    const PipelineRun run = run_pipeline(make_walkthrough_input(), dir, RunMode::Offline, {}, &view);
+    ASSERT_TRUE(run.result.completed);
+    const auto utterances = view.snapshot();
+    ASSERT_EQ(utterances.size(), 1u);
+    EXPECT_EQ(utterances[0].source, run.result.utterances[0].source_text);
+    EXPECT_EQ(utterances[0].translation, kHindi);
+    EXPECT_TRUE(utterances[0].translation_final);
+    EXPECT_EQ(utterances[0].emotion, "anger");
+    EXPECT_EQ(utterances[0].ecs.size(), run.result.utterances[0].ecs.size());
+    EXPECT_GE(utterances[0].out_start, 0.0);
 }
 
 TEST(PipelineE2E, ConversationTracksEachEmotionAndClosesTheLoop) {
