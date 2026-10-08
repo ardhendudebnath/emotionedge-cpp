@@ -1,0 +1,130 @@
+// EmotionEdge's streaming API (blueprint 5.3), the gRPC twin of the WebSocket protocol in
+// apps/README.md. Generate a client for any language from this file, e.g.
+//   python -m grpc_tools.protoc -I proto --python_out=. --grpc_python_out=. emotionedge/v1/translator.proto
+syntax = "proto3";
+
+package emotionedge.v1;
+
+// One live translation session per call. The client streams speech in, and gets back each
+// result as the pipeline produces it: what was heard, the emotion, the translation as it is
+// drafted and finalized, the prosody plan, the emotion consistency of what was synthesized,
+// and the translated speech at playback pace.
+service Translator {
+  // Request order: an optional StreamConfig, then audio, then EndOfSpeech. The responses start
+  // with Ready and end with Done or Error. Fails with RESOURCE_EXHAUSTED when the server runs
+  // its maximum of sessions, and INVALID_ARGUMENT for an unusable sample rate.
+  rpc Translate(stream TranslateRequest) returns (stream TranslateResponse);
+}
+
+message TranslateRequest {
+  oneof request {
+    StreamConfig config = 1;  // first, if at all: the speech's format
+    bytes audio = 2;          // mono 16-bit little-endian PCM at config.sample_rate
+    EndOfSpeech end = 3;      // no more speech: finish what was heard, play it out, then Done
+  }
+}
+
+message StreamConfig {
+  int32 sample_rate = 1;  // Hz, 8000-192000; default 16000 (the server resamples to 16 kHz)
+}
+
+message EndOfSpeech {}
+
+message TranslateResponse {
+  oneof response {
+    Ready ready = 1;
+    Transcript transcript = 2;
+    Emotion emotion = 3;
+    Translation translation = 4;
+    Prosody prosody = 5;
+    Consistency consistency = 6;
+    Playout playout = 7;
+    // The translated speech: mono 16-bit little-endian PCM at Ready.output_rate, in 10 ms
+    // blocks at playback pace. Silence is not sent.
+    bytes audio = 8;
+    Done done = 9;
+    Error error = 10;
+  }
+}
+
+// The session's models are loaded; speech sent earlier was buffered (up to 30 s).
+message Ready {
+  int32 input_rate = 1;
+  int32 output_rate = 2;
+  string source_language = 3;  // ISO 639-1
+  string target_language = 4;
+}
+
+// Speech recognition (2.1): partial hypotheses, then one final per utterance.
+message Transcript {
+  uint64 utterance = 1;
+  bool is_final = 2;
+  string text = 3;
+  string language = 4;
+  double start_seconds = 5;  // on the input timeline
+  double end_seconds = 6;
+  uint32 stable_words = 7;  // words committed by LocalAgreement
+}
+
+// A point in the blueprint's valence / arousal / dominance space, each in [-1, 1], with its
+// nearest label (anger, joy, sadness, fear, surprise, calm, neutral).
+message EmotionPoint {
+  string label = 1;
+  float valence = 2;
+  float arousal = 3;
+  float dominance = 4;
+}
+
+// The emotion read from the speaker for an utterance (3.1).
+message Emotion {
+  uint64 utterance = 1;
+  EmotionPoint point = 2;
+  float confidence = 3;
+  repeated string emphasis = 4;  // emphasized source words
+}
+
+// The translation (3.2): drafts while the speaker talks, then the final.
+message Translation {
+  uint64 utterance = 1;
+  bool is_final = 2;
+  string text = 3;
+  string language = 4;
+  repeated string emphasis = 5;  // the emphasized words, carried into the target
+}
+
+// The emotion controller's plan for the synthesized speech (4.1), relative to neutral.
+message Prosody {
+  uint64 utterance = 1;
+  float pitch_pct = 2;
+  float range_pct = 3;
+  float rate_pct = 4;
+  float energy_db = 5;
+  float pause_ms = 6;
+  float accent = 7;
+  float final_fall = 8;
+}
+
+// Emotion consistency (5.2) of one synthesized clause: ECS = 1 - |dVAD| / 2 sqrt(3) between the
+// speaker's emotion and what the consistency judge heard in the translation.
+message Consistency {
+  uint64 utterance = 1;
+  float ecs = 2;
+  EmotionPoint heard = 3;
+}
+
+// Where the utterance's translation played (5.1), on the output timeline.
+message Playout {
+  uint64 utterance = 1;
+  double start_seconds = 2;
+  double end_seconds = 3;
+}
+
+// The session has ended after the last audio: its full report, as `emotionedge run` writes to
+// session.json (per utterance and the latency budget).
+message Done {
+  string session_json = 1;
+}
+
+message Error {
+  string message = 1;
+}

@@ -32,6 +32,7 @@ option(EE_WITH_CTRANSLATE2 "CTranslate2 + SentencePiece translation adapter (NLL
 option(EE_WITH_PIPER "Piper TTS adapter (ONNX Runtime + espeak-ng)" OFF)
 option(EE_WITH_MINIAUDIO "miniaudio live capture and playback" OFF)
 option(EE_WITH_WEBSOCKET "IXWebSocket streaming server (emotionedge serve)" OFF)
+option(EE_WITH_GRPC "gRPC streaming server (emotionedge serve --grpc-port): needs gRPC and protobuf installed" OFF)
 option(EE_WITH_DESKTOP "Desktop app emotionedge-desktop: Dear ImGui + GLFW, HarfBuzz text shaping (needs EE_WITH_MINIAUDIO)" OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
@@ -65,4 +66,4 @@ endif()
 
 message(STATUS "EmotionEdge ${PROJECT_VERSION}: onnxruntime=${EE_WITH_ONNXRUNTIME} whisper=${EE_WITH_WHISPER} "
                "ctranslate2=${EE_WITH_CTRANSLATE2} piper=${EE_WITH_PIPER} miniaudio=${EE_WITH_MINIAUDIO} "
-               "websocket=${EE_WITH_WEBSOCKET} desktop=${EE_WITH_DESKTOP}")
+               "websocket=${EE_WITH_WEBSOCKET} grpc=${EE_WITH_GRPC} desktop=${EE_WITH_DESKTOP}")

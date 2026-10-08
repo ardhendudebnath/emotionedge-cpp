@@ -21,7 +21,8 @@
 
 #include "core/audio/resampler.hpp"
 #include "core/pipeline/demo.hpp"
-#include "core/server/translation_server.hpp"
+#include "core/server/session_pool.hpp"
+#include "core/server/websocket_server.hpp"
 
 namespace ee {
 namespace {
@@ -30,27 +31,36 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 using namespace std::chrono_literals;
 
+/// A session pool and a WebSocket server on it (the server goes first: it closes its sessions).
+struct Served {
+    std::unique_ptr<SessionPool> pool;
+    std::unique_ptr<WebSocketServer> server;
+    int port = 0;
+};
+
 /// A server on the first free port from 18765, with the stand-in engines and a word script for
 /// the scripted ASR.
-std::unique_ptr<TranslationServer> start_server(const fs::path& script, std::size_t max_sessions, int& port,
-                                                std::size_t warm_sessions = 1) {
-    TranslationServer::Options o;
+Served start_server(const fs::path& script, std::size_t max_sessions, std::size_t warm_sessions = 1) {
+    SessionPool::Options o;
     o.config = fs::path(EE_SOURCE_DIR) / "config" / "pipeline.yaml";
     o.max_sessions = max_sessions;
     o.warm_sessions = warm_sessions;
     // Long join timeouts: sanitizer builds must not take the "latest estimate" fallback.
     o.overrides = {{"asr.engine", "scripted"}, {"asr.script", script.string()},
                    {"state.join_timeout_ms", "20000"}, {"emotion.transcript_timeout_ms", "20000"}};
-    for (port = 18765; port < 18805; ++port) {
-        o.port = port;
-        auto server = std::make_unique<TranslationServer>(o);
+    Served s;
+    s.pool = std::make_unique<SessionPool>(o);
+    s.pool->start();
+    for (s.port = 18765; s.port < 18805; ++s.port) {
+        auto server = std::make_unique<WebSocketServer>(*s.pool, "127.0.0.1", s.port);
         try {
             server->start();
-            return server;
+            s.server = std::move(server);
+            return s;
         } catch (const std::runtime_error&) {
         }
     }
-    return nullptr;
+    return s;
 }
 
 /// A WebSocket client that records what the server sends.
@@ -135,13 +145,12 @@ fs::path write_script(const DemoInput& demo, const std::string& name) {
     return dir / "script.json";
 }
 
-TEST(TranslationServer, StreamsEventsAndTranslatedSpeech) {
+TEST(WebSocketServer, StreamsEventsAndTranslatedSpeech) {
     const DemoInput demo = make_walkthrough_input();
-    int port = 0;
-    const auto server = start_server(write_script(demo, "stream"), 1, port);
-    ASSERT_NE(server, nullptr) << "no free port in 18765-18804";
+    const Served s = start_server(write_script(demo, "stream"), 1);
+    ASSERT_NE(s.server, nullptr) << "no free port in 18765-18804";
 
-    Client client("ws://127.0.0.1:" + std::to_string(port) + "/?rate=" + std::to_string(demo.sample_rate));
+    Client client("ws://127.0.0.1:" + std::to_string(s.port) + "/?rate=" + std::to_string(demo.sample_rate));
     ASSERT_TRUE(client.wait_for("ready", 60s));
     client.send_pcm(demo.audio, demo.sample_rate);
     client.send_text(R"({"type": "end"})");
@@ -177,22 +186,21 @@ TEST(TranslationServer, StreamsEventsAndTranslatedSpeech) {
     ASSERT_EQ(events.back()["session"]["utterances"].size(), 1u);
     EXPECT_EQ(events.back()["session"]["utterances"][0]["translation"]["text"], (*translated)["text"]);
     EXPECT_GT(client.audio_bytes(), static_cast<std::size_t>(24000 * 2 / 2));  // over 0.5 s of speech
-    server->stop();
-    EXPECT_EQ(server->active_sessions(), 0u);
+    s.server->stop();
+    EXPECT_EQ(s.pool->active(), 0u);
 }
 
-// A warm session that has idled takes a client at another sample rate. A replacement loads after
-// that client leaves, and the next client gets a fresh session of its own.
-TEST(TranslationServer, ServesFromWarmSessionsAndNeverReusesOne) {
+// Over the wire: a warm session that has idled takes a client at another sample rate. A
+// replacement loads after that client leaves, and the next client gets a fresh session.
+TEST(WebSocketServer, ServesFromWarmSessionsAndNeverReusesOne) {
     const DemoInput demo = make_walkthrough_input();
-    int port = 0;
-    const auto server = start_server(write_script(demo, "warm"), 1, port, 1);
-    ASSERT_NE(server, nullptr) << "no free port in 18765-18804";
-    ASSERT_TRUE(eventually([&] { return server->warm_sessions_ready() == 1; }, 60s));
+    const Served s = start_server(write_script(demo, "warm"), 1, 1);
+    ASSERT_NE(s.server, nullptr) << "no free port in 18765-18804";
+    ASSERT_TRUE(eventually([&] { return s.pool->warm_ready() == 1; }, 60s));
     std::this_thread::sleep_for(300ms);  // the warm graph idles with no audio
 
     const auto run_client = [&](int rate) {
-        Client client("ws://127.0.0.1:" + std::to_string(port) + "/?rate=" + std::to_string(rate));
+        Client client("ws://127.0.0.1:" + std::to_string(s.port) + "/?rate=" + std::to_string(rate));
         EXPECT_TRUE(client.wait_for("ready", 60s));
         client.send_pcm(Resampler::convert(demo.audio, demo.sample_rate, rate), rate);
         client.send_text(R"({"type": "end"})");
@@ -209,28 +217,27 @@ TEST(TranslationServer, ServesFromWarmSessionsAndNeverReusesOne) {
     EXPECT_EQ(first.back()["session"]["utterances"][0]["source"]["text"], "I can't believe you did this!");
 
     // The replacement loads once the first client has gone (not during its session).
-    ASSERT_TRUE(eventually([&] { return server->active_sessions() == 0 && server->warm_sessions_ready() == 1; }, 60s));
+    ASSERT_TRUE(eventually([&] { return s.pool->active() == 0 && s.pool->warm_ready() == 1; }, 60s));
     const std::vector<json> second = run_client(demo.sample_rate);
     ASSERT_EQ(second.back()["type"], "done");
     EXPECT_EQ(second.back()["session"]["utterances"].size(), 1u);  // its own utterance only
-    server->stop();
+    s.server->stop();
 }
 
-TEST(TranslationServer, RefusesSessionsBeyondTheLimit) {
+TEST(WebSocketServer, RefusesSessionsBeyondTheLimit) {
     const DemoInput demo = make_walkthrough_input();
-    int port = 0;
-    const auto server = start_server(write_script(demo, "limit"), 1, port);
-    ASSERT_NE(server, nullptr) << "no free port in 18765-18804";
-    const std::string url = "ws://127.0.0.1:" + std::to_string(port) + "/";
+    const Served s = start_server(write_script(demo, "limit"), 1);
+    ASSERT_NE(s.server, nullptr) << "no free port in 18765-18804";
+    const std::string url = "ws://127.0.0.1:" + std::to_string(s.port) + "/";
 
     Client first(url);
     ASSERT_TRUE(first.wait_for("ready", 60s));
-    EXPECT_EQ(server->active_sessions(), 1u);
+    EXPECT_EQ(s.pool->active(), 1u);
     Client second(url);
     ASSERT_TRUE(second.wait_for("error", 30s));
     const std::vector<json> refused = second.events();
     EXPECT_NE(refused.front()["message"].get<std::string>().find("busy"), std::string::npos);
-    EXPECT_EQ(server->active_sessions(), 1u);
+    EXPECT_EQ(s.pool->active(), 1u);
 }
 
 }  // namespace
