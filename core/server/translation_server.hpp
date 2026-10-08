@@ -13,7 +13,13 @@ namespace ee {
 /// connection. The client streams speech in; it gets back each result as the pipeline produces
 /// it, and the translated speech at playback pace.
 ///
-/// Protocol, on ws://HOST:PORT/?rate=16000 (`rate`: the client's sample rate, default 16000):
+/// Loading a session's models takes seconds, so the server keeps `warm_sessions` loaded ahead of
+/// time. A connection takes one and is "ready" at once. Its replacement loads when a session ends,
+/// not while one runs, which would slow it. A session serves one connection only: it learns that
+/// speaker (voice print, emotion state, closed-loop correction).
+///
+/// Protocol, on ws://HOST:PORT/?rate=16000 (`rate`: the client's sample rate, default 16000;
+/// sessions run at 16 kHz and other rates are resampled on the way in):
 ///   client -> server
 ///     binary  mono 16-bit little-endian PCM at `rate`
 ///     text    {"type": "end"}: no more speech; finish, play out, then send "done"
@@ -33,6 +39,9 @@ public:
         int port = 8080;
         /// Each session loads its own models: on the GPU about 3 GB of memory each.
         std::size_t max_sessions = 1;
+        /// Sessions kept loaded for the next connections, on top of max_sessions in memory.
+        /// 0 = load on connect (seconds before "ready").
+        std::size_t warm_sessions = 1;
         std::filesystem::path config;
         std::vector<std::pair<std::string, std::string>> overrides;  ///< "stage.param" -> value
         int output_rate = 24000;
@@ -48,6 +57,8 @@ public:
     /// Ends every session, then stops listening.
     void stop();
     [[nodiscard]] std::size_t active_sessions() const;
+    /// Warm sessions whose models are loaded, waiting for a connection.
+    [[nodiscard]] std::size_t warm_sessions_ready() const;
 
 private:
     struct Impl;
