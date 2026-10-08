@@ -3,6 +3,7 @@
 captions, saves the translated speech, and reports the latency a client sees.
 
     python apps/web/stream_wav.py speech.wav [--url ws://127.0.0.1:8080/] [--out translated.wav]
+        [--token TOKEN] [--ca ca.pem]   # a server started with --token / with TLS (wss://)
 
 Latency here is from the moment the client has sent the end of an utterance (its transcript's
 `end` time, at the pace sent) to the first translated audio the client receives after that
@@ -26,7 +27,11 @@ async def main() -> int:
     parser.add_argument("wav", type=Path)
     parser.add_argument("--url", default="ws://127.0.0.1:8080/")
     parser.add_argument("--out", type=Path, default=Path("translated.wav"))
+    parser.add_argument("--token", help="sent as 'Authorization: Bearer <token>'")
+    parser.add_argument("--ca", type=Path, help="CA certificate to trust for wss:// (default: the system's)")
     args = parser.parse_args()
+    import ssl
+
     import websockets  # type: ignore
 
     with wave.open(str(args.wav)) as w:
@@ -41,7 +46,12 @@ async def main() -> int:
     url = args.url + ("&" if "?" in args.url else "?") + f"rate={rate}"
     events, audio, first_audio_after, queued = [], bytearray(), {}, []
     connecting = time.monotonic()
-    async with websockets.connect(url, max_size=None) as ws:
+    options = {"max_size": None}
+    if args.token:
+        options["additional_headers"] = {"Authorization": f"Bearer {args.token}"}
+    if url.startswith("wss://"):
+        options["ssl"] = ssl.create_default_context(cafile=str(args.ca) if args.ca else None)
+    async with websockets.connect(url, **options) as ws:
         ready = json.loads(await ws.recv())
         if ready["type"] != "ready":
             raise SystemExit(f"server: {ready}")

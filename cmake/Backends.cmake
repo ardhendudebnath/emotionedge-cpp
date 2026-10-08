@@ -155,9 +155,15 @@ if(EE_WITH_WEBSOCKET)
         if(NOT EE_FETCH_DEPS)
             message(FATAL_ERROR "ixwebsocket not found and EE_FETCH_DEPS=OFF")
         endif()
-        # Plain ws:// with no compression: no OpenSSL or zlib dependency. Put a TLS proxy in
-        # front of the server to expose it beyond localhost.
-        set(USE_TLS OFF CACHE BOOL "" FORCE)
+        # No compression (no zlib). TLS (wss://, `serve --tls-cert`) when OpenSSL is there.
+        find_package(OpenSSL QUIET)
+        if(OpenSSL_FOUND)
+            set(USE_TLS ON CACHE BOOL "" FORCE)
+            set(USE_OPEN_SSL ON CACHE BOOL "" FORCE)
+        else()
+            message(STATUS "OpenSSL not found: the WebSocket server is built without TLS (ws:// only)")
+            set(USE_TLS OFF CACHE BOOL "" FORCE)
+        endif()
         set(USE_ZLIB OFF CACHE BOOL "" FORCE)
         set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
         set(BUILD_SHARED_LIBS OFF)

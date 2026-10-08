@@ -1,6 +1,7 @@
 // emotionedge: command-line front end for the EmotionEdge pipeline.
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
@@ -38,6 +39,7 @@
 #endif
 #include <thread>
 
+#include "core/server/security.hpp"
 #include "core/server/session_pool.hpp"
 #if defined(EE_HAVE_WEBSOCKET)
 #include "core/server/websocket_server.hpp"
@@ -66,8 +68,10 @@ commands:
   devices    List audio devices (needs -DEE_WITH_MINIAUDIO=ON)
   serve      Streaming APIs, one live session per client (-DEE_WITH_WEBSOCKET=ON, -DEE_WITH_GRPC=ON):
              serve [--port 8080] [--grpc-port 50051] [--host 127.0.0.1] [--max-sessions 1] [--warm 1]
+                   [--tls-cert cert.pem --tls-key key.pem] [--token T | --token-file F]
              (--port 0: no WebSocket; gRPC only with --grpc-port); see apps/README.md
   stream     gRPC client for serve: stream --input speech.wav [--grpc 127.0.0.1:50051] [--out F]
+                   [--tls-ca ca.pem | --tls] [--token T]
   models     List or verify model files:  models [list|verify] [--manifest FILE]
   say        Speak text with a TTS engine into a WAV (test input for real ASR):
              say --text "One. | Two." [--engine piper --model-id ID --manifest FILE] [--out F]
@@ -104,7 +108,7 @@ struct Args {
     }
 };
 
-const std::set<std::string> kFlags = {"realtime", "conversation", "help", "trace"};
+const std::set<std::string> kFlags = {"realtime", "conversation", "help", "trace", "tls"};
 
 Args parse_args(int argc, char** argv) {
     Args a;
@@ -348,22 +352,40 @@ int cmd_serve(const Args& args) {
     if (args.has("target")) o.overrides.emplace_back("pipeline.target_language", args.get("target"));
     for (const auto& kv : args.sets) o.overrides.push_back(kv);
     const std::string host = args.get("host", "127.0.0.1");
+    ServerSecurity security;
+    security.cert_file = args.get("tls-cert");
+    security.key_file = args.get("tls-key");
+    security.token = args.get("token");
+    if (args.has("token-file")) {  // keeps the token out of the process list
+        security.token = read_text_file(args.get("token-file"));
+        while (!security.token.empty() && std::isspace(static_cast<unsigned char>(security.token.back()))) security.token.pop_back();
+        if (security.token.empty()) throw std::runtime_error("--token-file is empty");
+    }
+    security.validate();
+    if (reachable_beyond_localhost(host) && (!security.tls() || security.token.empty())) {
+        std::fprintf(stderr, "warning: %s is reachable from other machines, but %s. Use --tls-cert/--tls-key and --token.\n",
+                     host.c_str(), !security.tls() ? (security.token.empty() ? "traffic is unencrypted and anyone may connect"
+                                                                             : "traffic (the token too) is unencrypted")
+                                                   : "anyone may connect");
+    }
     SessionPool pool(o);
     pool.start();
+    const char* auth = security.token.empty() ? "" : ", token required";
 #if defined(EE_HAVE_WEBSOCKET)
     std::unique_ptr<WebSocketServer> ws;
     if (const int port = std::stoi(args.get("port", "8080")); port > 0) {
-        ws = std::make_unique<WebSocketServer>(pool, host, port);
+        ws = std::make_unique<WebSocketServer>(pool, host, port, security);
         ws->start();
-        std::printf("WebSocket: ws://%s:%d/\n", host.c_str(), port);
+        std::printf("WebSocket: %s://%s:%d/%s\n", security.tls() ? "wss" : "ws", host.c_str(), port, auth);
     }
 #endif
 #if defined(EE_HAVE_GRPC)
     std::unique_ptr<GrpcServer> grpc;
     if (const int port = std::stoi(args.get("grpc-port", "0")); port > 0) {
-        grpc = std::make_unique<GrpcServer>(pool, host, port);
+        grpc = std::make_unique<GrpcServer>(pool, host, port, security);
         grpc->start();
-        std::printf("gRPC: %s:%d (emotionedge.v1.Translator)\n", host.c_str(), grpc->port());
+        std::printf("gRPC: %s:%d (emotionedge.v1.Translator, %s%s)\n", host.c_str(), grpc->port(),
+                    security.tls() ? "TLS" : "plaintext", auth);
     }
 #endif
     std::printf("serving %s: one live session per client, up to %zu at a time, %zu kept loaded. Ctrl+C stops.\n",
@@ -393,8 +415,15 @@ int cmd_stream(const Args& args) {
     if (!args.has("input")) throw std::runtime_error("stream needs --input FILE.wav");
     const WavData wav = read_wav(args.get("input"));
     const std::string target = args.get("grpc", "127.0.0.1:50051");
-    auto stub = pb::Translator::NewStub(grpc::CreateChannel(target, grpc::InsecureChannelCredentials()));
+    std::shared_ptr<grpc::ChannelCredentials> credentials = grpc::InsecureChannelCredentials();
+    if (args.has("tls-ca") || args.has("tls")) {  // --tls: the system's trusted roots
+        grpc::SslCredentialsOptions ssl;
+        if (args.has("tls-ca")) ssl.pem_root_certs = read_text_file(args.get("tls-ca"));
+        credentials = grpc::SslCredentials(ssl);
+    }
+    auto stub = pb::Translator::NewStub(grpc::CreateChannel(target, credentials));
     grpc::ClientContext context;
+    if (args.has("token")) context.AddMetadata("authorization", "Bearer " + args.get("token"));
     const auto t0 = std::chrono::steady_clock::now();
     const auto since = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); };
     auto call = stub->Translate(&context);

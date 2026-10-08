@@ -40,6 +40,7 @@
     microphone, or the translation comes back into it.</p>
   <div class="bar">
     <input id="url" type="text" value="ws://127.0.0.1:8080/" aria-label="Server URL">
+    <input id="token" type="password" placeholder="token (if the server asks)" aria-label="Token" style="flex: 0 1 200px">
     <button id="mic" class="primary">Microphone</button>
     <label class="file">WAV file<input id="file" type="file" accept="audio/*"></label>
     <button id="stop" disabled>Stop</button>
@@ -104,6 +105,8 @@ function connect(rate) {
   return new Promise((resolve, reject) => {
     const url = new URL($("url").value);
     url.searchParams.set("rate", String(Math.round(rate)));
+    // Browsers cannot set an Authorization header on a WebSocket: the token goes in the query.
+    if ($("token").value) url.searchParams.set("token", $("token").value);
     ws = new WebSocket(url);
     ws.binaryType = "arraybuffer";
     ws.onopen = () => { status("Loading the models…"); resolve(); };

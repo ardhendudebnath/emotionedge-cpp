@@ -317,7 +317,7 @@ The measurements used:
 | `EE_WITH_CTRANSLATE2` | NLLB-200 via CTranslate2 + SentencePiece | CTranslate2 install, SentencePiece |
 | `EE_WITH_PIPER` | Piper voices | ONNX Runtime, espeak-ng |
 | `EE_WITH_MINIAUDIO` | `emotionedge live` (mic → speaker) | fetched automatically |
-| `EE_WITH_WEBSOCKET` | `emotionedge serve`: WebSocket streaming server (5.3) | fetched automatically (IXWebSocket, no TLS) |
+| `EE_WITH_WEBSOCKET` | `emotionedge serve`: WebSocket streaming server (5.3) | fetched automatically (IXWebSocket); `wss://` with OpenSSL |
 | `EE_WITH_GRPC` | `emotionedge serve --grpc-port`: gRPC streaming server (5.3), and the `stream` client | gRPC and protobuf installed (apt: `libgrpc++-dev protobuf-compiler-grpc`); with CTranslate2 it also builds SentencePiece |
 | `EE_WITH_DESKTOP` | `emotionedge-desktop`: the desktop app (5.3) | `EE_WITH_MINIAUDIO`, X11 headers; Dear ImGui, GLFW, HarfBuzz and the font are fetched |
 
@@ -381,7 +381,7 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
    - the public benchmark report (`ml/eval/benchmark.py`, [docs/benchmark.md](docs/benchmark.md));
    - the streaming APIs (`emotionedge serve`, [apps/README.md](apps/README.md)): WebSocket and
      gRPC ([`proto/`](proto/emotionedge/v1/translator.proto)) on one pool of warm sessions, with
-     browser, Python and C++ clients;
+     browser, Python and C++ clients, TLS and a bearer token;
    - the desktop app (`emotionedge-desktop`): live captions with shaped Hindi, emotion and the
      latency budget.
 

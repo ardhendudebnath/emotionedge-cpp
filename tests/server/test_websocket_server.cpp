@@ -21,6 +21,7 @@
 
 #include "core/audio/resampler.hpp"
 #include "core/pipeline/demo.hpp"
+#include "core/server/security.hpp"
 #include "core/server/session_pool.hpp"
 #include "core/server/websocket_server.hpp"
 
@@ -40,7 +41,8 @@ struct Served {
 
 /// A server on the first free port from 18765, with the stand-in engines and a word script for
 /// the scripted ASR.
-Served start_server(const fs::path& script, std::size_t max_sessions, std::size_t warm_sessions = 1) {
+Served start_server(const fs::path& script, std::size_t max_sessions, std::size_t warm_sessions = 1,
+                    const ServerSecurity& security = {}) {
     SessionPool::Options o;
     o.config = fs::path(EE_SOURCE_DIR) / "config" / "pipeline.yaml";
     o.max_sessions = max_sessions;
@@ -52,7 +54,7 @@ Served start_server(const fs::path& script, std::size_t max_sessions, std::size_
     s.pool = std::make_unique<SessionPool>(o);
     s.pool->start();
     for (s.port = 18765; s.port < 18805; ++s.port) {
-        auto server = std::make_unique<WebSocketServer>(*s.pool, "127.0.0.1", s.port);
+        auto server = std::make_unique<WebSocketServer>(*s.pool, "127.0.0.1", s.port, security);
         try {
             server->start();
             s.server = std::move(server);
@@ -63,12 +65,19 @@ Served start_server(const fs::path& script, std::size_t max_sessions, std::size_
     return s;
 }
 
-/// A WebSocket client that records what the server sends.
+/// A WebSocket client that records what the server sends. `ca`: trust it for wss://.
 class Client {
 public:
-    explicit Client(const std::string& url) {
+    explicit Client(const std::string& url, const ix::WebSocketHttpHeaders& headers = {}, const fs::path& ca = {}) {
         ix::initNetSystem();
         ws_.setUrl(url);
+        ws_.setExtraHeaders(headers);
+        if (!ca.empty()) {
+            ix::SocketTLSOptions tls;
+            tls.tls = true;
+            tls.caFile = ca.string();
+            ws_.setTLSOptions(tls);
+        }
         ws_.disableAutomaticReconnection();
         ws_.setOnMessageCallback([this](const ix::WebSocketMessagePtr& msg) {
             const std::lock_guard<std::mutex> lock(mu_);
@@ -238,6 +247,54 @@ TEST(WebSocketServer, RefusesSessionsBeyondTheLimit) {
     const std::vector<json> refused = second.events();
     EXPECT_NE(refused.front()["message"].get<std::string>().find("busy"), std::string::npos);
     EXPECT_EQ(s.pool->active(), 1u);
+}
+
+// --token: no session without it; the header (programs) or ?token= (browsers) gets one.
+TEST(WebSocketServer, AsksForTheToken) {
+    const DemoInput demo = make_walkthrough_input();
+    ServerSecurity security;
+    security.token = "s3cret";
+    const Served s = start_server(write_script(demo, "token"), 2, 1, security);
+    ASSERT_NE(s.server, nullptr) << "no free port in 18765-18804";
+    const std::string url = "ws://127.0.0.1:" + std::to_string(s.port) + "/";
+    {
+        Client without(url + "?token=guess");
+        ASSERT_TRUE(without.wait_for("error", 30s));
+        EXPECT_NE(without.events().front()["message"].get<std::string>().find("unauthorized"), std::string::npos);
+        EXPECT_EQ(s.pool->active(), 0u);  // refused before a session was taken
+    }
+    {
+        Client browser(url + "?token=s3cret");
+        EXPECT_TRUE(browser.wait_for("ready", 60s));
+        Client program(url, {{"Authorization", "Bearer s3cret"}});
+        EXPECT_TRUE(program.wait_for("ready", 60s));
+        EXPECT_EQ(s.pool->active(), 2u);
+    }
+}
+
+// --tls-cert/--tls-key: the same session over wss://, trusted through the test CA.
+TEST(WebSocketServer, ServesOverTls) {
+#if !defined(IXWEBSOCKET_USE_TLS)
+    GTEST_SKIP() << "this build's IXWebSocket has no TLS (OpenSSL not found)";
+#else
+    const DemoInput demo = make_walkthrough_input();
+    const fs::path tls = fs::path(EE_SOURCE_DIR) / "tests" / "data" / "tls";
+    ServerSecurity security;
+    security.cert_file = tls / "server.pem";
+    security.key_file = tls / "server.key";
+    const Served s = start_server(write_script(demo, "tls"), 1, 1, security);
+    ASSERT_NE(s.server, nullptr) << "no free port in 18765-18804";
+
+    Client client("wss://localhost:" + std::to_string(s.port) + "/?rate=" + std::to_string(demo.sample_rate), {},
+                  tls / "ca.pem");
+    ASSERT_TRUE(client.wait_for("ready", 60s));
+    client.send_pcm(demo.audio, demo.sample_rate);
+    client.send_text(R"({"type": "end"})");
+    ASSERT_TRUE(client.wait_for("done", 120s));
+    const std::vector<json> events = client.events();
+    EXPECT_EQ(events.back()["session"]["utterances"][0]["source"]["text"], "I can't believe you did this!");
+    EXPECT_GT(client.audio_bytes(), 0u);
+#endif
 }
 
 }  // namespace
