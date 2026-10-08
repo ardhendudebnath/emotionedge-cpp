@@ -58,7 +58,7 @@ commands:
   live       Translate the microphone in real time (needs -DEE_WITH_MINIAUDIO=ON)
   devices    List audio devices (needs -DEE_WITH_MINIAUDIO=ON)
   serve      WebSocket server, one live session per connection (needs -DEE_WITH_WEBSOCKET=ON):
-             serve [--port 8080] [--host 127.0.0.1] [--max-sessions 1]; see apps/README.md
+             serve [--port 8080] [--host 127.0.0.1] [--max-sessions 1] [--warm 1]; see apps/README.md
   models     List or verify model files:  models [list|verify] [--manifest FILE]
   say        Speak text with a TTS engine into a WAV (test input for real ASR):
              say --text "One. | Two." [--engine piper --model-id ID --manifest FILE] [--out F]
@@ -334,14 +334,15 @@ int cmd_serve(const Args& args) {
     o.host = args.get("host", "127.0.0.1");
     o.port = std::stoi(args.get("port", "8080"));
     o.max_sessions = std::stoul(args.get("max-sessions", "1"));
+    o.warm_sessions = std::stoul(args.get("warm", "1"));
     o.config = resolve_config(args);
     if (args.has("target")) o.overrides.emplace_back("pipeline.target_language", args.get("target"));
     for (const auto& kv : args.sets) o.overrides.push_back(kv);
     TranslationServer server(o);
     server.start();
-    std::printf("serving ws://%s:%d/ with %s: one live session per connection, up to %zu at a time. "
-                "Ctrl+C stops.\n",
-                o.host.c_str(), o.port, o.config.generic_string().c_str(), o.max_sessions);
+    std::printf("serving ws://%s:%d/ with %s: one live session per connection, up to %zu at a time, "
+                "%zu kept loaded. Ctrl+C stops.\n",
+                o.host.c_str(), o.port, o.config.generic_string().c_str(), o.max_sessions, o.warm_sessions);
     std::signal(SIGINT, on_serve_interrupt);
     std::signal(SIGTERM, on_serve_interrupt);
     while (!g_serve_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));

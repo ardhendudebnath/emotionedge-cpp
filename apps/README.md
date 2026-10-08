@@ -58,7 +58,7 @@ Built with `-DEE_WITH_WEBSOCKET=ON`. That fetches IXWebSocket v12.0.1 (BSD-3), p
 with no TLS or zlib.
 
 ```bash
-emotionedge serve --config config/pipeline.engines.yaml --port 8080 [--host 127.0.0.1] [--max-sessions 1]
+emotionedge serve --config config/pipeline.engines.yaml --port 8080 [--host 127.0.0.1] [--max-sessions 1] [--warm 1]
 python apps/web/stream_wav.py speech.wav --url ws://127.0.0.1:8080/   # reference client (pip install websockets)
 ```
 
@@ -69,11 +69,27 @@ shows live captions with the emotion and ECS while the translation plays. Serve 
 Each connection runs one live session, the same threaded graph as `live`:
 - **The speaker is the client.** The translated speech goes out at playback pace, as a sound card
   would take it, so adaptive pacing and barge-in behave as they do on a device.
-- **Sessions are not shared.** Each one loads its own models: about 3 GB of GPU memory and a few
-  seconds before `ready`. `--max-sessions` refuses connections beyond the limit.
+- **Sessions are kept warm.** Loading a session's models takes seconds, so the server keeps
+  `--warm` sessions (default 1) loaded ahead of time. A connection takes one and gets `ready` at
+  once. The replacement loads when a session ends, not while one runs.
 
-The protocol on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate (the front
-end resamples it):
+  On the real engines (jfk.wav, 6 connections per setting, interleaved):
+
+  | Setting | `ready` after connecting | End-to-end p95 |
+  |---|---|---|
+  | `--warm 0` | 2.9–6.1 s | 690–729 ms |
+  | `--warm 1` | 0.03–0.06 s | 628–858 ms |
+
+  The warm medians match the cold ones, with a wider spread. Loading the replacement during the
+  next session instead added 300–450 ms to the p95 of half the connections.
+- **Sessions are never reused.** A session learns its speaker: the voice print, the emotion
+  state, the closed-loop correction. When the connection ends, its session is discarded.
+- **Memory:** each session holds its own models, about 3 GB of GPU memory. `--max-sessions`
+  refuses connections beyond the limit; warm sessions come on top of it. `--warm 0` loads on
+  connect instead.
+
+The protocol on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate (sessions
+run at 16 kHz; the server resamples other rates):
 
 | Direction | Frame | Content |
 |---|---|---|

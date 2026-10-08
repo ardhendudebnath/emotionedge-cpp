@@ -16,8 +16,10 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include "core/audio/resampler.hpp"
 #include "core/pipeline/demo.hpp"
 #include "core/server/translation_server.hpp"
 
@@ -30,10 +32,12 @@ using namespace std::chrono_literals;
 
 /// A server on the first free port from 18765, with the stand-in engines and a word script for
 /// the scripted ASR.
-std::unique_ptr<TranslationServer> start_server(const fs::path& script, std::size_t max_sessions, int& port) {
+std::unique_ptr<TranslationServer> start_server(const fs::path& script, std::size_t max_sessions, int& port,
+                                                std::size_t warm_sessions = 1) {
     TranslationServer::Options o;
     o.config = fs::path(EE_SOURCE_DIR) / "config" / "pipeline.yaml";
     o.max_sessions = max_sessions;
+    o.warm_sessions = warm_sessions;
     // Long join timeouts: sanitizer builds must not take the "latest estimate" fallback.
     o.overrides = {{"asr.engine", "scripted"}, {"asr.script", script.string()},
                    {"state.join_timeout_ms", "20000"}, {"emotion.transcript_timeout_ms", "20000"}};
@@ -114,6 +118,16 @@ private:
     bool closed_ = false;
 };
 
+template <typename Pred>
+bool eventually(Pred pred, std::chrono::seconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!pred()) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::sleep_for(20ms);
+    }
+    return true;
+}
+
 fs::path write_script(const DemoInput& demo, const std::string& name) {
     const fs::path dir = fs::temp_directory_path() / ("ee_server_" + name);
     fs::create_directories(dir);
@@ -165,6 +179,41 @@ TEST(TranslationServer, StreamsEventsAndTranslatedSpeech) {
     EXPECT_GT(client.audio_bytes(), static_cast<std::size_t>(24000 * 2 / 2));  // over 0.5 s of speech
     server->stop();
     EXPECT_EQ(server->active_sessions(), 0u);
+}
+
+// A warm session that has idled takes a client at another sample rate. A replacement loads after
+// that client leaves, and the next client gets a fresh session of its own.
+TEST(TranslationServer, ServesFromWarmSessionsAndNeverReusesOne) {
+    const DemoInput demo = make_walkthrough_input();
+    int port = 0;
+    const auto server = start_server(write_script(demo, "warm"), 1, port, 1);
+    ASSERT_NE(server, nullptr) << "no free port in 18765-18804";
+    ASSERT_TRUE(eventually([&] { return server->warm_sessions_ready() == 1; }, 60s));
+    std::this_thread::sleep_for(300ms);  // the warm graph idles with no audio
+
+    const auto run_client = [&](int rate) {
+        Client client("ws://127.0.0.1:" + std::to_string(port) + "/?rate=" + std::to_string(rate));
+        EXPECT_TRUE(client.wait_for("ready", 60s));
+        client.send_pcm(Resampler::convert(demo.audio, demo.sample_rate, rate), rate);
+        client.send_text(R"({"type": "end"})");
+        EXPECT_TRUE(client.wait_for("done", 120s));
+        return client.events();
+    };
+
+    const std::vector<json> first = run_client(48000);  // resampled to 16 kHz by the server
+    ASSERT_FALSE(first.empty());
+    EXPECT_EQ(first.front()["type"], "ready");
+    EXPECT_EQ(first.front()["input_rate"], 48000);
+    ASSERT_EQ(first.back()["type"], "done");
+    ASSERT_EQ(first.back()["session"]["utterances"].size(), 1u);
+    EXPECT_EQ(first.back()["session"]["utterances"][0]["source"]["text"], "I can't believe you did this!");
+
+    // The replacement loads once the first client has gone (not during its session).
+    ASSERT_TRUE(eventually([&] { return server->active_sessions() == 0 && server->warm_sessions_ready() == 1; }, 60s));
+    const std::vector<json> second = run_client(demo.sample_rate);
+    ASSERT_EQ(second.back()["type"], "done");
+    EXPECT_EQ(second.back()["session"]["utterances"].size(), 1u);  // its own utterance only
+    server->stop();
 }
 
 TEST(TranslationServer, RefusesSessionsBeyondTheLimit) {

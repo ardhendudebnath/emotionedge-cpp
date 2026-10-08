@@ -40,12 +40,14 @@ async def main() -> int:
 
     url = args.url + ("&" if "?" in args.url else "?") + f"rate={rate}"
     events, audio, first_audio_after, queued = [], bytearray(), {}, []
+    connecting = time.monotonic()
     async with websockets.connect(url, max_size=None) as ws:
         ready = json.loads(await ws.recv())
         if ready["type"] != "ready":
             raise SystemExit(f"server: {ready}")
         output_rate = ready["output_rate"]
-        print(f"ready: {ready['source_language']} -> {ready['target_language']}, {rate} Hz in, {output_rate} Hz out")
+        print(f"ready {time.monotonic() - connecting:.2f} s after connecting: {ready['source_language']} -> "
+              f"{ready['target_language']}, {rate} Hz in, {output_rate} Hz out")
         start = time.monotonic()
 
         async def send() -> None:
