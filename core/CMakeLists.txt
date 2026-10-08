@@ -145,7 +145,7 @@ ee_add_module(pipeline
 
 # ---- server/: live sessions for the streaming APIs (5.3), and their transports ------------------
 # The session pool has no dependencies of its own; WebSocket and gRPC come with their options.
-set(EE_SERVER_SOURCES server/session_pool.cpp)
+set(EE_SERVER_SOURCES server/security.cpp server/session_pool.cpp)
 set(EE_SERVER_PRIVATE_DEPS nlohmann_json::nlohmann_json)
 if(EE_WITH_WEBSOCKET)
     list(APPEND EE_SERVER_SOURCES server/websocket_server.cpp)

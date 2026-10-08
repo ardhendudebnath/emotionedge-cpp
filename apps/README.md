@@ -60,7 +60,7 @@ for both:
 
 | Transport | Build | Option | Clients |
 |---|---|---|---|
-| WebSocket | `-DEE_WITH_WEBSOCKET=ON`: fetches IXWebSocket v12.0.1 (BSD-3), pinned, no TLS or zlib | `--port 8080` (0: off) | browsers, anything with WebSockets |
+| WebSocket | `-DEE_WITH_WEBSOCKET=ON`: fetches IXWebSocket v12.0.1 (BSD-3), pinned; TLS with OpenSSL if found, no zlib | `--port 8080` (0: off) | browsers, anything with WebSockets |
 | gRPC | `-DEE_WITH_GRPC=ON`: an installed gRPC and protobuf (apt: `libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler`) | `--grpc-port 50051` (default: off) | generated from [`proto/emotionedge/v1/translator.proto`](../proto/emotionedge/v1/translator.proto), any language |
 
 ```bash
@@ -68,6 +68,9 @@ emotionedge serve --config config/pipeline.engines.yaml --port 8080 --grpc-port 
 python apps/web/stream_wav.py speech.wav --url ws://127.0.0.1:8080/   # WebSocket reference client (pip install websockets)
 emotionedge stream --input speech.wav --grpc 127.0.0.1:50051         # gRPC reference client (C++, typed stubs)
 ```
+
+Both listen on localhost, unencrypted and open, by default. Before exposing them, add TLS and a
+token (see below).
 
 Open `apps/web/index.html` for a browser client. It streams the microphone or a WAV file, and
 shows live captions with the emotion and ECS while the translation plays. Serve the folder
@@ -148,10 +151,41 @@ own copy of protobuf and exports it. Next to gRPC's protobuf, that crashed the p
 `EE_WITH_GRPC` and `EE_WITH_CTRANSLATE2`, the build fetches SentencePiece v0.2.0 (pinned) and
 builds it against the system protobuf, with its own abseil kept private.
 
-Limits:
-- **No encryption, no authentication:** plain `ws://` and insecure gRPC, listening on localhost
-  by default. Put a TLS-terminating proxy in front before exposing either.
-- **A client that stops reading** stalls its own session's playback.
+### TLS and a token
+
+Both transports take the same settings:
+
+```bash
+emotionedge serve --host 0.0.0.0 --port 8443 --grpc-port 50051 \
+    --tls-cert server.pem --tls-key server.key --token-file token.txt
+emotionedge stream --input speech.wav --grpc myhost:50051 --tls-ca ca.pem --token "$(cat token.txt)"
+python apps/web/stream_wav.py speech.wav --url wss://myhost:8443/ --ca ca.pem --token "$(cat token.txt)"
+```
+
+| Setting | WebSocket | gRPC |
+|---|---|---|
+| `--tls-cert` / `--tls-key` (PEM) | `wss://` (IXWebSocket with OpenSSL; a build without OpenSSL refuses to start with them) | SSL server credentials |
+| `--token` / `--token-file` | `Authorization: Bearer <token>` on the handshake, or `?token=` from browsers, which cannot set the header (the browser client has a token field). Refused: an `unauthorized` error, then close code 1008 | `authorization: Bearer <token>` metadata; refused with `UNAUTHENTICATED` |
+
+- **No session is taken** for a refused client.
+- **Tokens are compared in constant time.** `--token-file` keeps the token out of the process
+  list.
+- **Prefer the header to `?token=`:** a URL can end up in proxy logs and browser history.
+- **A warning is printed** when `--host` is reachable from other machines but TLS or the token
+  is missing. The token is only worth something over TLS.
+- **No latency cost.** On the real engines, a plain and a secure server ran side by side (jfk.wav,
+  5 interleaved runs each, medians):
+
+  | | `ready` after connecting | End-to-end p50 / p95 |
+  |---|---|---|
+  | gRPC, plaintext | 0.00 s | 389 / 611 ms |
+  | gRPC, TLS + token | 0.01 s | 373 / 614 ms |
+  | WebSocket, `ws://` | 0.03 s | 397 / 614 ms |
+  | WebSocket, `wss://` + token | 0.05 s | 389 / 631 ms |
+- **Test certificates:** `tests/data/tls` holds a test-only CA and a localhost certificate for
+  the tests. Its key is public: never serve with it.
+
+Limit: **a client that stops reading** stalls its own session's playback.
 
 ## `emotionedge-desktop` (desktop app, 5.3)
 

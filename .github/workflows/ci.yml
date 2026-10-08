@@ -88,7 +88,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libespeak-ng-dev libsentencepiece-dev libopenblas-dev libdnnl-dev \
-            libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler
+            libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler libssl-dev
       - name: ONNX Runtime ${{ env.ORT_VERSION }}
         run: |
           curl -fsSL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"

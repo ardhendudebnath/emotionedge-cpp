@@ -142,9 +142,19 @@ grpc::Status refused_status(const SessionPool::Refused& refused) {
 
 class TranslatorService final : public pb::Translator::Service {
 public:
-    explicit TranslatorService(SessionPool& pool) : pool_(pool) {}
+    TranslatorService(SessionPool& pool, std::string token) : pool_(pool), token_(std::move(token)) {}
 
     grpc::Status Translate(grpc::ServerContext* context, Stream* stream) override {
+        if (!token_.empty()) {
+            std::string_view presented;
+            if (const auto it = context->client_metadata().find("authorization"); it != context->client_metadata().end()) {
+                presented = bearer_token(std::string_view(it->second.data(), it->second.size()));
+            }
+            if (!token_matches(token_, presented)) {
+                log::warn("grpc: refused a call from ", context->peer(), ": no valid token");
+                return {grpc::StatusCode::UNAUTHENTICATED, "this server needs \"authorization: Bearer <token>\" metadata"};
+            }
+        }
         pb::TranslateRequest request;
         bool pending = stream->Read(&request);
         int rate = 16000;
@@ -186,29 +196,39 @@ public:
 
 private:
     SessionPool& pool_;
+    std::string token_;
 };
 
 }  // namespace
 
 struct GrpcServer::Impl {
-    Impl(SessionPool& p, std::string h, int pt) : service(p), host(std::move(h)), port(pt) {}
+    Impl(SessionPool& p, std::string h, int pt, ServerSecurity s)
+        : service(p, s.token), host(std::move(h)), port(pt), security(std::move(s)) {}
 
     TranslatorService service;
     std::string host;
     int port;
+    ServerSecurity security;
     int bound = 0;
     std::unique_ptr<grpc::Server> server;
 };
 
-GrpcServer::GrpcServer(SessionPool& pool, std::string host, int port)
-    : impl_(std::make_unique<Impl>(pool, std::move(host), port)) {}
+GrpcServer::GrpcServer(SessionPool& pool, std::string host, int port, ServerSecurity security)
+    : impl_(std::make_unique<Impl>(pool, std::move(host), port, std::move(security))) {}
 
 GrpcServer::~GrpcServer() { stop(); }
 
 void GrpcServer::start() {
+    impl_->security.validate();
+    std::shared_ptr<grpc::ServerCredentials> credentials = grpc::InsecureServerCredentials();
+    if (impl_->security.tls()) {
+        grpc::SslServerCredentialsOptions ssl;
+        ssl.pem_key_cert_pairs.push_back({read_text_file(impl_->security.key_file), read_text_file(impl_->security.cert_file)});
+        credentials = grpc::SslServerCredentials(ssl);
+    }
     grpc::ServerBuilder builder;
     const std::string address = impl_->host + ":" + std::to_string(impl_->port);
-    builder.AddListeningPort(address, grpc::InsecureServerCredentials(), &impl_->bound);
+    builder.AddListeningPort(address, credentials, &impl_->bound);
     builder.RegisterService(&impl_->service);
     impl_->server = builder.BuildAndStart();
     if (!impl_->server || impl_->bound == 0) {

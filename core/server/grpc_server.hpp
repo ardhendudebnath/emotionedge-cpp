@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include "core/server/security.hpp"
 #include "core/server/session_pool.hpp"
 
 namespace ee {
@@ -11,15 +12,19 @@ namespace ee {
 /// (proto/emotionedge/v1/translator.proto). Each Translate call is one live session from the
 /// SessionPool, which it shares with the WebSocket server in the same process: the same warm
 /// sessions and the same limit.
+///
+/// With ServerSecurity: TLS with the certificate, and a token each call presents as
+/// "authorization: Bearer <token>" metadata. Calls without it fail with UNAUTHENTICATED.
 class GrpcServer {
 public:
     /// port 0 picks a free port (see port()).
-    GrpcServer(SessionPool& pool, std::string host, int port);
+    GrpcServer(SessionPool& pool, std::string host, int port, ServerSecurity security = {});
     ~GrpcServer();
     GrpcServer(const GrpcServer&) = delete;
     GrpcServer& operator=(const GrpcServer&) = delete;
 
-    /// Binds and starts serving. Throws std::runtime_error if it cannot listen.
+    /// Binds and starts serving. Throws std::runtime_error if it cannot listen, and ConfigError
+    /// for unusable TLS settings.
     void start();
     /// Stops serving; end the pool's sessions first, or in-flight calls finish first.
     void stop();

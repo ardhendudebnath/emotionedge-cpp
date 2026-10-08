@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include "core/server/security.hpp"
 #include "core/server/session_pool.hpp"
 
 namespace ee {
@@ -26,14 +27,19 @@ namespace ee {
 ///             {"type": "error", "message"} when the session cannot start or fails
 ///     binary  the translated speech, mono 16-bit little-endian PCM at output_rate, sent in 10 ms
 ///             blocks as it would play. Silence is not sent.
+///
+/// With ServerSecurity: wss:// with the certificate (needs a build with OpenSSL), and a token the
+/// client presents as "Authorization: Bearer <token>" or, from browsers, which cannot set that
+/// header, as ?token=. Without it the connection is closed (1008) after an "unauthorized" error.
 class WebSocketServer {
 public:
-    WebSocketServer(SessionPool& pool, std::string host, int port);
+    WebSocketServer(SessionPool& pool, std::string host, int port, ServerSecurity security = {});
     ~WebSocketServer();
     WebSocketServer(const WebSocketServer&) = delete;
     WebSocketServer& operator=(const WebSocketServer&) = delete;
 
-    /// Binds and starts accepting connections. Throws std::runtime_error if it cannot listen.
+    /// Binds and starts accepting connections. Throws std::runtime_error if it cannot listen, and
+    /// ConfigError for unusable TLS settings.
     void start();
     /// Ends its clients' sessions, then stops listening.
     void stop();

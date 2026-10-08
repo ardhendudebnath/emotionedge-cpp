@@ -5,12 +5,14 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <map>
 #include <mutex>
 #include <stdexcept>
 
 #include "core/runtime/log.hpp"
+#include "core/runtime/params.hpp"  // ConfigError
 
 namespace ee {
 
@@ -18,25 +20,43 @@ namespace {
 
 using json = nlohmann::json;
 
-/// `key`'s integer value in a request URI's query ("/?rate=48000"), or `fallback`.
-int query_int(const std::string& uri, const std::string& key, int fallback) {
+/// `key`'s value in a request URI's query ("/?rate=48000&token=..."), percent-decoded; empty if
+/// absent.
+std::string query_value(const std::string& uri, const std::string& key) {
     const auto q = uri.find('?');
-    if (q == std::string::npos) return fallback;
+    if (q == std::string::npos) return {};
     std::size_t pos = q + 1;
     while (pos < uri.size()) {
         const std::size_t amp = std::min(uri.find('&', pos), uri.size());
         const std::string pair = uri.substr(pos, amp - pos);
         const auto eq = pair.find('=');
         if (eq != std::string::npos && pair.substr(0, eq) == key) {
-            try {
-                return std::stoi(pair.substr(eq + 1));
-            } catch (const std::exception&) {
-                return fallback;
+            std::string value;
+            const std::string raw = pair.substr(eq + 1);
+            for (std::size_t i = 0; i < raw.size(); ++i) {
+                if (raw[i] == '%' && i + 2 < raw.size() && std::isxdigit(static_cast<unsigned char>(raw[i + 1])) &&
+                    std::isxdigit(static_cast<unsigned char>(raw[i + 2]))) {
+                    value.push_back(static_cast<char>(std::stoi(raw.substr(i + 1, 2), nullptr, 16)));
+                    i += 2;
+                } else {
+                    value.push_back(raw[i] == '+' ? ' ' : raw[i]);
+                }
             }
+            return value;
         }
         pos = amp + 1;
     }
-    return fallback;
+    return {};
+}
+
+int query_int(const std::string& uri, const std::string& key, int fallback) {
+    const std::string value = query_value(uri, key);
+    if (value.empty()) return fallback;
+    try {
+        return std::stoi(value);
+    } catch (const std::exception&) {
+        return fallback;
+    }
 }
 
 std::string error_json(std::string_view message) {
@@ -85,12 +105,13 @@ struct Client {
 }  // namespace
 
 struct WebSocketServer::Impl {
-    Impl(SessionPool& p, std::string h, int pt) : pool(p), host(std::move(h)), port(pt), server(pt, host) {}
+    Impl(SessionPool& p, std::string h, int pt, ServerSecurity s)
+        : pool(p), host(std::move(h)), port(pt), security(std::move(s)), server(pt, host) {}
 
     void on_message(const std::shared_ptr<ix::ConnectionState>& state, ix::WebSocket& ws,
                     const ix::WebSocketMessagePtr& msg) {
         switch (msg->type) {
-        case ix::WebSocketMessageType::Open: open(state->getId(), ws, msg->openInfo.uri); break;
+        case ix::WebSocketMessageType::Open: open(state->getId(), ws, msg->openInfo); break;
         case ix::WebSocketMessageType::Message: {
             const std::shared_ptr<Client> c = find(state->getId());
             if (c == nullptr) return;
@@ -112,8 +133,22 @@ struct WebSocketServer::Impl {
         }
     }
 
-    void open(const std::string& id, ix::WebSocket& ws, const std::string& uri) {
-        const int rate = query_int(uri, "rate", 16000);
+    void open(const std::string& id, ix::WebSocket& ws, const ix::WebSocketOpenInfo& info) {
+        if (!security.token.empty()) {
+            // The header from programs; ?token= from browsers, which cannot set it.
+            std::string presented;
+            if (const auto it = info.headers.find("Authorization"); it != info.headers.end()) {
+                presented = std::string(bearer_token(it->second));
+            }
+            if (presented.empty()) presented = query_value(info.uri, "token");
+            if (!token_matches(security.token, presented)) {
+                ws.sendText(error_json("unauthorized: this server needs a valid token"));
+                ws.close(1008, "unauthorized");  // 1008: policy violation
+                log::warn("websocket: refused connection ", id, ": no valid token");
+                return;
+            }
+        }
+        const int rate = query_int(info.uri, "rate", 16000);
         auto client = std::make_shared<Client>(ws);
         try {
             client->stream = pool.open(client->channel, rate);
@@ -152,21 +187,35 @@ struct WebSocketServer::Impl {
     SessionPool& pool;
     std::string host;
     int port;
+    ServerSecurity security;
     ix::WebSocketServer server;
     std::mutex mu;
     std::map<std::string, std::shared_ptr<Client>> clients;  ///< by ix::ConnectionState id
     bool started = false;
 };
 
-WebSocketServer::WebSocketServer(SessionPool& pool, std::string host, int port) {
+WebSocketServer::WebSocketServer(SessionPool& pool, std::string host, int port, ServerSecurity security) {
     ix::initNetSystem();
-    impl_ = std::make_unique<Impl>(pool, std::move(host), port);
+    impl_ = std::make_unique<Impl>(pool, std::move(host), port, std::move(security));
 }
 
 WebSocketServer::~WebSocketServer() { stop(); }
 
 void WebSocketServer::start() {
     Impl& g = *impl_;
+    g.security.validate();
+    if (g.security.tls()) {
+#if defined(IXWEBSOCKET_USE_TLS)
+        ix::SocketTLSOptions tls;
+        tls.tls = true;
+        tls.certFile = g.security.cert_file.string();
+        tls.keyFile = g.security.key_file.string();
+        tls.caFile = "NONE";  // clients are not asked for certificates
+        g.server.setTLSOptions(tls);
+#else
+        throw ConfigError("this build's WebSocket server has no TLS (OpenSSL was not found when it was configured)");
+#endif
+    }
     g.server.disablePerMessageDeflate();
     g.server.setOnClientMessageCallback(
         [impl = impl_.get()](std::shared_ptr<ix::ConnectionState> state, ix::WebSocket& ws, const ix::WebSocketMessagePtr& msg) {

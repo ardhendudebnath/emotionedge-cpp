@@ -24,6 +24,7 @@ add_executable(ee_tests
     emotion/test_emotion_stages.cpp
     pipeline/test_pipeline_e2e.cpp
     prosody/test_controller.cpp
+    server/test_security.cpp
     server/test_session_pool.cpp
     runtime/test_config.cpp
     runtime/test_graph.cpp

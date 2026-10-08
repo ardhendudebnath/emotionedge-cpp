@@ -9,11 +9,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
 #include "core/pipeline/demo.hpp"
 #include "core/server/grpc_server.hpp"
+#include "core/server/security.hpp"
 #include "core/server/session_pool.hpp"
 #include "emotionedge/v1/translator.grpc.pb.h"
 
@@ -43,6 +45,25 @@ std::string pcm16(const std::vector<float>& audio, std::size_t from, std::size_t
         bytes.push_back(static_cast<char>(s >> 8));
     }
     return bytes;
+}
+
+/// Opens a call, sends the config and reads the first response: OK if it is Ready, else the
+/// call's status.
+grpc::StatusCode first_response(pb::Translator::Stub& stub, const std::string& token = {}) {
+    grpc::ClientContext context;
+    if (!token.empty()) context.AddMetadata("authorization", "Bearer " + token);
+    auto call = stub.Translate(&context);
+    pb::TranslateRequest config;
+    config.mutable_config()->set_sample_rate(16000);
+    call->Write(config);
+    pb::TranslateResponse response;
+    const bool ready = call->Read(&response) && response.response_case() == pb::TranslateResponse::kReady;
+    if (ready) context.TryCancel();  // done with it
+    call->WritesDone();
+    while (call->Read(&response)) {
+    }
+    const grpc::Status status = call->Finish();
+    return ready ? grpc::StatusCode::OK : status.error_code();
 }
 
 TEST(GrpcServer, TranslatesAStreamIntoTypedResults) {
@@ -155,6 +176,50 @@ TEST(GrpcServer, RefusesBeyondTheLimitWithResourceExhausted) {
 
     first_context.TryCancel();  // the first client hangs up
     EXPECT_EQ(first->Finish().error_code(), grpc::StatusCode::CANCELLED);
+    pool.stop();
+    server.stop();
+}
+
+// --token: UNAUTHENTICATED without the right "authorization" metadata, a session with it.
+TEST(GrpcServer, AsksForTheToken) {
+    const DemoInput demo = make_walkthrough_input();
+    SessionPool pool(pool_options(demo, "token"));
+    pool.start();
+    ServerSecurity security;
+    security.token = "s3cret";
+    GrpcServer server(pool, "127.0.0.1", 0, security);
+    server.start();
+    auto stub = pb::Translator::NewStub(
+        grpc::CreateChannel("127.0.0.1:" + std::to_string(server.port()), grpc::InsecureChannelCredentials()));
+
+    EXPECT_EQ(first_response(*stub), grpc::StatusCode::UNAUTHENTICATED);
+    EXPECT_EQ(first_response(*stub, "guess"), grpc::StatusCode::UNAUTHENTICATED);
+    EXPECT_EQ(first_response(*stub, "s3cret"), grpc::StatusCode::OK);
+    pool.stop();
+    server.stop();
+}
+
+// --tls-cert/--tls-key: a session over TLS, trusted through the test CA; plaintext is refused.
+TEST(GrpcServer, ServesOverTls) {
+    const DemoInput demo = make_walkthrough_input();
+    SessionPool pool(pool_options(demo, "tls"));
+    pool.start();
+    const fs::path tls = fs::path(EE_SOURCE_DIR) / "tests" / "data" / "tls";
+    ServerSecurity security;
+    security.cert_file = tls / "server.pem";
+    security.key_file = tls / "server.key";
+    GrpcServer server(pool, "127.0.0.1", 0, security);
+    server.start();
+    const std::string target = "127.0.0.1:" + std::to_string(server.port());
+
+    grpc::SslCredentialsOptions ssl;
+    std::ifstream ca(tls / "ca.pem");
+    ssl.pem_root_certs.assign(std::istreambuf_iterator<char>(ca), std::istreambuf_iterator<char>());
+    auto secure = pb::Translator::NewStub(grpc::CreateChannel(target, grpc::SslCredentials(ssl)));
+    EXPECT_EQ(first_response(*secure), grpc::StatusCode::OK);
+
+    auto plain = pb::Translator::NewStub(grpc::CreateChannel(target, grpc::InsecureChannelCredentials()));
+    EXPECT_EQ(first_response(*plain), grpc::StatusCode::UNAVAILABLE);
     pool.stop();
     server.stop();
 }
