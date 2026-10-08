@@ -143,10 +143,19 @@ ee_add_module(pipeline
     PUBLIC_DEPS ee::tts ee::translate ee::prosody ee::asr ee::emotion ee::audio ee::runtime ee::telemetry
     PRIVATE_DEPS nlohmann_json::nlohmann_json)
 
-# ---- server/: WebSocket streaming server, one live session per connection (5.3) ---------------
+# ---- server/: live sessions for the streaming APIs (5.3), and their transports ------------------
+# The session pool has no dependencies of its own; WebSocket and gRPC come with their options.
+set(EE_SERVER_SOURCES server/session_pool.cpp)
+set(EE_SERVER_PRIVATE_DEPS nlohmann_json::nlohmann_json)
 if(EE_WITH_WEBSOCKET)
-    ee_add_module(server
-        SOURCES server/translation_server.cpp
-        PUBLIC_DEPS ee::pipeline
-        PRIVATE_DEPS ee::websocket nlohmann_json::nlohmann_json)
+    list(APPEND EE_SERVER_SOURCES server/websocket_server.cpp)
+    list(APPEND EE_SERVER_PRIVATE_DEPS ee::websocket)
 endif()
+if(EE_WITH_GRPC)
+    list(APPEND EE_SERVER_SOURCES server/grpc_server.cpp)
+    list(APPEND EE_SERVER_PRIVATE_DEPS ee::grpc_proto)
+endif()
+ee_add_module(server
+    SOURCES ${EE_SERVER_SOURCES}
+    PUBLIC_DEPS ee::pipeline
+    PRIVATE_DEPS ${EE_SERVER_PRIVATE_DEPS})

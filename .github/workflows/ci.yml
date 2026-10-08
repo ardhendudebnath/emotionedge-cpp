@@ -84,10 +84,11 @@ jobs:
       CT2_VERSION: 4.8.2
     steps:
       - uses: actions/checkout@v4
-      - name: System packages (espeak-ng, SentencePiece, OpenBLAS, oneDNN)
+      - name: System packages (espeak-ng, SentencePiece, OpenBLAS, oneDNN, gRPC)
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libespeak-ng-dev libsentencepiece-dev libopenblas-dev libdnnl-dev
+          sudo apt-get install -y --no-install-recommends libespeak-ng-dev libsentencepiece-dev libopenblas-dev libdnnl-dev \
+            libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler
       - name: ONNX Runtime ${{ env.ORT_VERSION }}
         run: |
           curl -fsSL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
@@ -113,7 +114,7 @@ jobs:
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON \
             -DEE_WITH_ONNXRUNTIME=ON -DEE_WITH_WHISPER=ON -DEE_WITH_CTRANSLATE2=ON \
-            -DEE_WITH_PIPER=ON -DEE_WITH_MINIAUDIO=ON -DEE_WITH_WEBSOCKET=ON \
+            -DEE_WITH_PIPER=ON -DEE_WITH_MINIAUDIO=ON -DEE_WITH_WEBSOCKET=ON -DEE_WITH_GRPC=ON \
             -DEE_ONNXRUNTIME_ROOT="$HOME/ort" -DCMAKE_PREFIX_PATH="$HOME/ct2"
       - name: Build
         run: cmake --build build -j 4

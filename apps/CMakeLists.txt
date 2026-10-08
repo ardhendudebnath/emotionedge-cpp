@@ -1,10 +1,13 @@
-# apps/: the emotionedge CLI, with `serve` (the WebSocket server, 5.3) when built with
-# EE_WITH_WEBSOCKET, and emotionedge-desktop (EE_WITH_DESKTOP). See apps/README.md.
+# apps/: the emotionedge CLI, with `serve` (the streaming APIs, 5.3) when built with
+# EE_WITH_WEBSOCKET and/or EE_WITH_GRPC, and emotionedge-desktop (EE_WITH_DESKTOP). See
+# apps/README.md.
 add_executable(emotionedge cli/main.cpp)
-target_link_libraries(emotionedge PRIVATE ee::pipeline ee_project_options nlohmann_json::nlohmann_json)
+target_link_libraries(emotionedge PRIVATE ee::pipeline ee::server ee_project_options nlohmann_json::nlohmann_json)
 if(EE_WITH_WEBSOCKET)
-    target_link_libraries(emotionedge PRIVATE ee::server)
     target_compile_definitions(emotionedge PRIVATE EE_HAVE_WEBSOCKET=1)
+endif()
+if(EE_WITH_GRPC)
+    target_link_libraries(emotionedge PRIVATE ee::grpc_proto)  # the `stream` client's stubs
 endif()
 target_compile_definitions(emotionedge PRIVATE
     EE_DEFAULT_CONFIG="${PROJECT_SOURCE_DIR}/config/pipeline.yaml"

@@ -36,10 +36,17 @@
 #if defined(EE_HAVE_MINIAUDIO)
 #include "core/audio/device.hpp"
 #endif
-#if defined(EE_HAVE_WEBSOCKET)
 #include <thread>
 
-#include "core/server/translation_server.hpp"
+#include "core/server/session_pool.hpp"
+#if defined(EE_HAVE_WEBSOCKET)
+#include "core/server/websocket_server.hpp"
+#endif
+#if defined(EE_HAVE_GRPC)
+#include <grpcpp/grpcpp.h>
+
+#include "core/server/grpc_server.hpp"
+#include "emotionedge/v1/translator.grpc.pb.h"
 #endif
 
 namespace fs = std::filesystem;
@@ -57,8 +64,10 @@ commands:
   run        Translate a WAV file:  run --input speech.wav [--script words.json]
   live       Translate the microphone in real time (needs -DEE_WITH_MINIAUDIO=ON)
   devices    List audio devices (needs -DEE_WITH_MINIAUDIO=ON)
-  serve      WebSocket server, one live session per connection (needs -DEE_WITH_WEBSOCKET=ON):
-             serve [--port 8080] [--host 127.0.0.1] [--max-sessions 1] [--warm 1]; see apps/README.md
+  serve      Streaming APIs, one live session per client (-DEE_WITH_WEBSOCKET=ON, -DEE_WITH_GRPC=ON):
+             serve [--port 8080] [--grpc-port 50051] [--host 127.0.0.1] [--max-sessions 1] [--warm 1]
+             (--port 0: no WebSocket; gRPC only with --grpc-port); see apps/README.md
+  stream     gRPC client for serve: stream --input speech.wav [--grpc 127.0.0.1:50051] [--out F]
   models     List or verify model files:  models [list|verify] [--manifest FILE]
   say        Speak text with a TTS engine into a WAV (test input for real ASR):
              say --text "One. | Two." [--engine piper --model-id ID --manifest FILE] [--out F]
@@ -322,35 +331,157 @@ int cmd_live(const Args& args) {
 #endif
 }
 
-#if defined(EE_HAVE_WEBSOCKET)
+#if defined(EE_HAVE_WEBSOCKET) || defined(EE_HAVE_GRPC)
 std::atomic<bool> g_serve_stop{false};
 
 void on_serve_interrupt(int) { g_serve_stop.store(true); }  // lock-free atomic: async-signal-safe
 #endif
 
+/// The streaming APIs (5.3): WebSocket on --port, gRPC on --grpc-port, sharing one pool of live
+/// sessions (the limit and the warm sessions are for both).
 int cmd_serve(const Args& args) {
-#if defined(EE_HAVE_WEBSOCKET)
-    TranslationServer::Options o;
-    o.host = args.get("host", "127.0.0.1");
-    o.port = std::stoi(args.get("port", "8080"));
+#if defined(EE_HAVE_WEBSOCKET) || defined(EE_HAVE_GRPC)
+    SessionPool::Options o;
     o.max_sessions = std::stoul(args.get("max-sessions", "1"));
     o.warm_sessions = std::stoul(args.get("warm", "1"));
     o.config = resolve_config(args);
     if (args.has("target")) o.overrides.emplace_back("pipeline.target_language", args.get("target"));
     for (const auto& kv : args.sets) o.overrides.push_back(kv);
-    TranslationServer server(o);
-    server.start();
-    std::printf("serving ws://%s:%d/ with %s: one live session per connection, up to %zu at a time, "
-                "%zu kept loaded. Ctrl+C stops.\n",
-                o.host.c_str(), o.port, o.config.generic_string().c_str(), o.max_sessions, o.warm_sessions);
+    const std::string host = args.get("host", "127.0.0.1");
+    SessionPool pool(o);
+    pool.start();
+#if defined(EE_HAVE_WEBSOCKET)
+    std::unique_ptr<WebSocketServer> ws;
+    if (const int port = std::stoi(args.get("port", "8080")); port > 0) {
+        ws = std::make_unique<WebSocketServer>(pool, host, port);
+        ws->start();
+        std::printf("WebSocket: ws://%s:%d/\n", host.c_str(), port);
+    }
+#endif
+#if defined(EE_HAVE_GRPC)
+    std::unique_ptr<GrpcServer> grpc;
+    if (const int port = std::stoi(args.get("grpc-port", "0")); port > 0) {
+        grpc = std::make_unique<GrpcServer>(pool, host, port);
+        grpc->start();
+        std::printf("gRPC: %s:%d (emotionedge.v1.Translator)\n", host.c_str(), grpc->port());
+    }
+#endif
+    std::printf("serving %s: one live session per client, up to %zu at a time, %zu kept loaded. Ctrl+C stops.\n",
+                o.config.generic_string().c_str(), o.max_sessions, o.warm_sessions);
     std::signal(SIGINT, on_serve_interrupt);
     std::signal(SIGTERM, on_serve_interrupt);
     while (!g_serve_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    server.stop();
+    pool.stop();  // ends every session, so in-flight calls finish
+#if defined(EE_HAVE_GRPC)
+    if (grpc) grpc->stop();
+#endif
+#if defined(EE_HAVE_WEBSOCKET)
+    if (ws) ws->stop();
+#endif
     return 0;
 #else
     (void)args;
-    throw std::runtime_error("serve needs a build with -DEE_WITH_WEBSOCKET=ON");
+    throw std::runtime_error("serve needs a build with -DEE_WITH_WEBSOCKET=ON and/or -DEE_WITH_GRPC=ON");
+#endif
+}
+
+/// A gRPC client for `serve --grpc-port` (the reference for clients in other languages): streams
+/// a WAV at speaking pace, prints the captions, saves the translated speech.
+int cmd_stream(const Args& args) {
+#if defined(EE_HAVE_GRPC)
+    namespace pb = emotionedge::v1;
+    if (!args.has("input")) throw std::runtime_error("stream needs --input FILE.wav");
+    const WavData wav = read_wav(args.get("input"));
+    const std::string target = args.get("grpc", "127.0.0.1:50051");
+    auto stub = pb::Translator::NewStub(grpc::CreateChannel(target, grpc::InsecureChannelCredentials()));
+    grpc::ClientContext context;
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto since = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); };
+    auto call = stub->Translate(&context);
+
+    pb::TranslateRequest request;
+    request.mutable_config()->set_sample_rate(wav.sample_rate);
+    call->Write(request);
+    // Wait for Ready before speaking, as a live client would.
+    pb::TranslateResponse response;
+    if (!call->Read(&response) || response.response_case() != pb::TranslateResponse::kReady) {
+        const grpc::Status status = call->Finish();
+        throw std::runtime_error("no Ready from " + target + ": " + status.error_message());
+    }
+    const int output_rate = response.ready().output_rate();
+    std::printf("ready %.2f s after connecting: %s -> %s\n", since(), response.ready().source_language().c_str(),
+                response.ready().target_language().c_str());
+
+    std::thread sender([&] {
+        const auto start = std::chrono::steady_clock::now();
+        const std::size_t block = static_cast<std::size_t>(wav.sample_rate / 50);  // 20 ms
+        pb::TranslateRequest r;
+        for (std::size_t pos = 0, i = 0; pos < wav.samples.size(); pos += block, ++i) {
+            std::this_thread::sleep_until(start + std::chrono::milliseconds(20 * i));
+            std::string bytes;
+            for (std::size_t k = pos; k < std::min(pos + block, wav.samples.size()); ++k) {
+                const auto s = static_cast<std::uint16_t>(
+                    static_cast<std::int16_t>(std::clamp(wav.samples[k], -1.0f, 1.0f) * 32767.0f));
+                bytes.push_back(static_cast<char>(s & 0xFFu));
+                bytes.push_back(static_cast<char>(s >> 8));
+            }
+            r.set_audio(std::move(bytes));
+            if (!call->Write(r)) return;
+        }
+        r.mutable_end();
+        call->Write(r);
+        call->WritesDone();
+    });
+
+    std::vector<float> speech;
+    std::string session_json;
+    while (call->Read(&response)) {
+        switch (response.response_case()) {
+        case pb::TranslateResponse::kTranscript:
+            if (response.transcript().is_final()) std::printf("%6.2fs  heard       %s\n", since(), response.transcript().text().c_str());
+            break;
+        case pb::TranslateResponse::kEmotion: {
+            const pb::EmotionPoint& p = response.emotion().point();
+            std::printf("%6.2fs  felt        %s (V %+.2f A %+.2f D %+.2f, confidence %.2f)\n", since(), p.label().c_str(),
+                        static_cast<double>(p.valence()), static_cast<double>(p.arousal()),
+                        static_cast<double>(p.dominance()), static_cast<double>(response.emotion().confidence()));
+            break;
+        }
+        case pb::TranslateResponse::kTranslation:
+            if (response.translation().is_final()) std::printf("%6.2fs  translated  %s\n", since(), response.translation().text().c_str());
+            break;
+        case pb::TranslateResponse::kAudio: {
+            const std::string& b = response.audio();
+            for (std::size_t i = 0; i + 1 < b.size(); i += 2) {
+                const auto lo = static_cast<unsigned>(static_cast<std::uint8_t>(b[i]));
+                const auto hi = static_cast<unsigned>(static_cast<std::uint8_t>(b[i + 1]));
+                speech.push_back(static_cast<float>(static_cast<std::int16_t>(lo | (hi << 8))) / 32768.0f);
+            }
+            break;
+        }
+        case pb::TranslateResponse::kDone: session_json = response.done().session_json(); break;
+        case pb::TranslateResponse::kError: std::printf("error: %s\n", response.error().message().c_str()); break;
+        default: break;
+        }
+    }
+    sender.join();
+    const grpc::Status status = call->Finish();
+    if (!status.ok()) throw std::runtime_error("Translate failed: " + status.error_message());
+    const fs::path out = args.get("out", "translated.wav");
+    write_wav(out, speech, output_rate);
+    std::printf("wrote %s: %.1f s of translated speech\n", abs_path(out).c_str(), static_cast<double>(speech.size()) / output_rate);
+    if (!session_json.empty()) {
+        const auto session = nlohmann::json::parse(session_json, nullptr, false);
+        if (session.is_object() && session.contains("end_to_end") && session["end_to_end"].value("count", 0) > 0) {
+            std::printf("server end to end: p50 %.0f ms, p95 %.0f ms over %d utterance(s)\n",
+                        session["end_to_end"].value("p50_ms", 0.0), session["end_to_end"].value("p95_ms", 0.0),
+                        session["end_to_end"].value("count", 0));
+        }
+    }
+    return 0;
+#else
+    (void)args;
+    throw std::runtime_error("stream needs a build with -DEE_WITH_GRPC=ON");
 #endif
 }
 
@@ -552,6 +683,7 @@ int main(int argc, char** argv) {
         if (args.command == "live") return cmd_live(args);
         if (args.command == "devices") return cmd_devices();
         if (args.command == "serve") return cmd_serve(args);
+        if (args.command == "stream") return cmd_stream(args);
         if (args.command == "models") return cmd_models(args);
         if (args.command == "stages") return cmd_stages();
         if (args.command == "say") return cmd_say(args);

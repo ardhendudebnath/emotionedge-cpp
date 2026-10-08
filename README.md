@@ -318,6 +318,7 @@ The measurements used:
 | `EE_WITH_PIPER` | Piper voices | ONNX Runtime, espeak-ng |
 | `EE_WITH_MINIAUDIO` | `emotionedge live` (mic → speaker) | fetched automatically |
 | `EE_WITH_WEBSOCKET` | `emotionedge serve`: WebSocket streaming server (5.3) | fetched automatically (IXWebSocket, no TLS) |
+| `EE_WITH_GRPC` | `emotionedge serve --grpc-port`: gRPC streaming server (5.3), and the `stream` client | gRPC and protobuf installed (apt: `libgrpc++-dev protobuf-compiler-grpc`); with CTranslate2 it also builds SentencePiece |
 | `EE_WITH_DESKTOP` | `emotionedge-desktop`: the desktop app (5.3) | `EE_WITH_MINIAUDIO`, X11 headers; Dear ImGui, GLFW, HarfBuzz and the font are fetched |
 
 [models/README.md](models/README.md) lists every model with its license. NLLB-200 weights are
@@ -336,11 +337,12 @@ core/            C++20 runtime (one static library per module)
   tts/           clause chunker, formant stand-in, Piper adapter
   telemetry/     metrics, latency budget, ECS, Perfetto trace
   pipeline/      stage registry, outputs (5.3), session runner, demo input
-  server/        WebSocket streaming server (5.3)
+  server/        live sessions for the streaming APIs (5.3): WebSocket, gRPC
 apps/            emotionedge CLI; desktop/: the desktop app; web/: clients for the server
 bench/           latency harness (ee_bench)
 config/          pipeline graphs, expressivity profiles, emotion space, phrasebook
 models/          manifest.json + fetch script (model files are not committed)
+proto/           the gRPC API (emotionedge.v1.Translator)
 ml/              offline Python factory: data, train, distill, export, eval
 tests/           GoogleTest unit + end-to-end "golden audio" tests
 docs/            blueprint -> code map
@@ -377,11 +379,12 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
    lowers arousal for sadness.
 5. **Ship** (in progress). Done:
    - the public benchmark report (`ml/eval/benchmark.py`, [docs/benchmark.md](docs/benchmark.md));
-   - the WebSocket server (`emotionedge serve`, [apps/README.md](apps/README.md)), with a browser
-     client and a Python reference client;
+   - the streaming APIs (`emotionedge serve`, [apps/README.md](apps/README.md)): WebSocket and
+     gRPC ([`proto/`](proto/emotionedge/v1/translator.proto)) on one pool of warm sessions, with
+     browser, Python and C++ clients;
    - the desktop app (`emotionedge-desktop`): live captions with shaped Hindi, emotion and the
      latency budget.
 
-   Next: gRPC, Android and Jetson builds.
+   Next: Android and Jetson builds.
 
 Every phase ends with the P5 quality gate (`ml/eval/quality_gate.py`).

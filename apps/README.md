@@ -13,7 +13,8 @@ emotionedge say --engine piper --model-id tts.piper.en_US.lessac.medium --text "
                                       # test input for real ASR: '|' separates utterances (--gap seconds)
 emotionedge models verify             # SHA-256 check of models/manifest.json
 emotionedge stages                    # registered stage types
-emotionedge serve --port 8080         # WebSocket server, one live session per connection (-DEE_WITH_WEBSOCKET=ON)
+emotionedge serve --port 8080 --grpc-port 50051   # WebSocket and gRPC, one live session per client
+emotionedge stream --input speech.wav             # gRPC client for serve (-DEE_WITH_GRPC=ON)
 emotionedge-desktop                   # desktop app: live captions, emotion, latency (-DEE_WITH_DESKTOP=ON)
 emotionedge run --input speech.wav --config config/pipeline.engines.yaml --realtime --echo-sim -6 \
     --set frontend.record=out/echo/run   # what an open loudspeaker would do, recorded
@@ -52,21 +53,27 @@ Devices:
   e.g. to find nodes that leave the GPU.
 - `gpu_id` picks the GPU.
 
-## `emotionedge serve` (WebSocket server, 5.3)
+## `emotionedge serve` (streaming APIs, 5.3)
 
-Built with `-DEE_WITH_WEBSOCKET=ON`. That fetches IXWebSocket v12.0.1 (BSD-3), pinned by SHA-256,
-with no TLS or zlib.
+Two transports share one pool of live sessions, so the warm sessions and the session limit are
+for both:
+
+| Transport | Build | Option | Clients |
+|---|---|---|---|
+| WebSocket | `-DEE_WITH_WEBSOCKET=ON`: fetches IXWebSocket v12.0.1 (BSD-3), pinned, no TLS or zlib | `--port 8080` (0: off) | browsers, anything with WebSockets |
+| gRPC | `-DEE_WITH_GRPC=ON`: an installed gRPC and protobuf (apt: `libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler`) | `--grpc-port 50051` (default: off) | generated from [`proto/emotionedge/v1/translator.proto`](../proto/emotionedge/v1/translator.proto), any language |
 
 ```bash
-emotionedge serve --config config/pipeline.engines.yaml --port 8080 [--host 127.0.0.1] [--max-sessions 1] [--warm 1]
-python apps/web/stream_wav.py speech.wav --url ws://127.0.0.1:8080/   # reference client (pip install websockets)
+emotionedge serve --config config/pipeline.engines.yaml --port 8080 --grpc-port 50051 [--host 127.0.0.1] [--max-sessions 1] [--warm 1]
+python apps/web/stream_wav.py speech.wav --url ws://127.0.0.1:8080/   # WebSocket reference client (pip install websockets)
+emotionedge stream --input speech.wav --grpc 127.0.0.1:50051         # gRPC reference client (C++, typed stubs)
 ```
 
 Open `apps/web/index.html` for a browser client. It streams the microphone or a WAV file, and
 shows live captions with the emotion and ECS while the translation plays. Serve the folder
 (`python -m http.server -d apps/web`) if the browser refuses the microphone on `file://`.
 
-Each connection runs one live session, the same threaded graph as `live`:
+Each client gets one live session, the same threaded graph as `live` (`core/server/session_pool.cpp`):
 - **The speaker is the client.** The translated speech goes out at playback pace, as a sound card
   would take it, so adaptive pacing and barge-in behave as they do on a device.
 - **Sessions are kept warm.** Loading a session's models takes seconds, so the server keeps
@@ -88,8 +95,8 @@ Each connection runs one live session, the same threaded graph as `live`:
   refuses connections beyond the limit; warm sessions come on top of it. `--warm 0` loads on
   connect instead.
 
-The protocol on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate (sessions
-run at 16 kHz; the server resamples other rates):
+The WebSocket protocol, on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate
+(sessions run at 16 kHz; the server resamples other rates):
 
 | Direction | Frame | Content |
 |---|---|---|
@@ -111,9 +118,39 @@ telemetry matches in-process runs ([docs/benchmark.md](../docs/benchmark.md)):
 The client saw 360–442 ms from the end of an utterance to its first translated audio, where no
 earlier translation was still playing.
 
+### gRPC
+
+The `emotionedge.v1.Translator` service has one bidirectional streaming call, `Translate`, with
+the same content as the WebSocket protocol, typed:
+
+| | Messages |
+|---|---|
+| requests | an optional `StreamConfig {sample_rate}`, then `audio` (16-bit PCM bytes), then `EndOfSpeech` |
+| responses | `Ready`, then as they happen `Transcript`, `Emotion` (an `EmotionPoint`: label, V·A·D), `Translation`, `Prosody`, `Consistency` (ECS and the `EmotionPoint` heard), `Playout`, and `audio` (the translated speech, 16-bit PCM at `Ready.output_rate`); last `Done {session_json}` or `Error` |
+| status | `RESOURCE_EXHAUSTED` beyond `--max-sessions`, `INVALID_ARGUMENT` for a sample rate outside 8–192 kHz, `CANCELLED` when the client hangs up |
+
+Generate a client for any language from the proto, for example
+`python -m grpc_tools.protoc -I proto --python_out=. --grpc_python_out=. emotionedge/v1/translator.proto`.
+`emotionedge stream` (`apps/cli/main.cpp`) is a C++ one: it streams a WAV at speaking pace and
+prints the captions.
+
+On the real engines (jfk.wav, warm session):
+
+| Transport | End to end p50 | End to end p95 |
+|---|---|---|
+| gRPC, 2 calls | 381–389 ms | 595–631 ms |
+| WebSocket, same server | 471 ms | 721 ms |
+
+Both are in line with the in-process benchmark.
+
+**Building gRPC with the engines:** Ubuntu's SentencePiece (for the NLLB tokenizer) carries its
+own copy of protobuf and exports it. Next to gRPC's protobuf, that crashed the process. So with
+`EE_WITH_GRPC` and `EE_WITH_CTRANSLATE2`, the build fetches SentencePiece v0.2.0 (pinned) and
+builds it against the system protobuf, with its own abseil kept private.
+
 Limits:
-- **Plain `ws://`, no authentication**, listening on localhost by default. Put a TLS-terminating
-  proxy in front of it before exposing it.
+- **No encryption, no authentication:** plain `ws://` and insecure gRPC, listening on localhost
+  by default. Put a TLS-terminating proxy in front before exposing either.
 - **A client that stops reading** stalls its own session's playback.
 
 ## `emotionedge-desktop` (desktop app, 5.3)
@@ -151,5 +188,4 @@ Xvfb on the stand-in engines and keeps the image. The microphone path is the sam
 
 ## Planned (roadmap phase 5 "Ship")
 
-- **gRPC** next to the WebSocket API, for typed clients.
 - **Android and Jetson** builds.

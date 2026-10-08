@@ -68,14 +68,46 @@ endif()
 # ---- CTranslate2 + SentencePiece (NLLB-200 translation) ----------------------------------------
 if(EE_WITH_CTRANSLATE2)
     find_package(ctranslate2 CONFIG REQUIRED)
-    find_path(EE_SPM_INCLUDE_DIR sentencepiece_processor.h)
-    find_library(EE_SPM_LIBRARY NAMES sentencepiece)
-    if(NOT EE_SPM_INCLUDE_DIR OR NOT EE_SPM_LIBRARY)
-        message(FATAL_ERROR "SentencePiece not found (apt: libsentencepiece-dev, vcpkg: sentencepiece)")
-    endif()
     add_library(ee_ctranslate2 INTERFACE)
-    target_include_directories(ee_ctranslate2 SYSTEM INTERFACE "${EE_SPM_INCLUDE_DIR}")
-    target_link_libraries(ee_ctranslate2 INTERFACE CTranslate2::ctranslate2 "${EE_SPM_LIBRARY}")
+    if(EE_WITH_GRPC)
+        # Packaged SentencePiece builds (Ubuntu's libsentencepiece0, for one) carry their own
+        # protobuf and abseil and export them. gRPC needs the system protobuf, and two copies in
+        # one process crash: gRPC's calls land in SentencePiece's copy. So with gRPC,
+        # SentencePiece is built here:
+        # - against the protobuf gRPC uses;
+        # - with its own small abseil, kept private by hidden visibility. Its "package" abseil mode
+        #   needs absl::log, newer than Ubuntu 24.04's abseil.
+        if(NOT EE_FETCH_DEPS)
+            message(FATAL_ERROR "EE_WITH_GRPC with EE_WITH_CTRANSLATE2 builds SentencePiece: it needs EE_FETCH_DEPS=ON")
+        endif()
+        set(SPM_PROTOBUF_PROVIDER package CACHE STRING "" FORCE)
+        set(SPM_ABSL_PROVIDER internal CACHE STRING "" FORCE)
+        set(SPM_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+        set(SPM_ENABLE_TCMALLOC OFF CACHE BOOL "" FORCE)
+        set(SPM_BUILD_TEST OFF CACHE BOOL "" FORCE)
+        set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # its cmake_minimum_required(VERSION 3.1) predates CMake 4
+        FetchContent_Declare(sentencepiece
+            URL https://github.com/google/sentencepiece/archive/refs/tags/v0.2.0.tar.gz
+            URL_HASH SHA256=9970f0a0afee1648890293321665e5b2efa04eaec9f1671fcf8048f456f5bb86)
+        FetchContent_MakeAvailable(sentencepiece)
+        unset(CMAKE_POLICY_VERSION_MINIMUM)
+        foreach(_t sentencepiece-static sentencepiece_train-static)
+            target_compile_options(${_t} PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>)
+            set_target_properties(${_t} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+        endforeach()
+        find_package(Protobuf REQUIRED)
+        target_include_directories(ee_ctranslate2 SYSTEM INTERFACE "${sentencepiece_SOURCE_DIR}/src")
+        target_link_libraries(ee_ctranslate2 INTERFACE CTranslate2::ctranslate2 sentencepiece-static protobuf::libprotobuf)
+        target_compile_definitions(ee_ctranslate2 INTERFACE _USE_EXTERNAL_PROTOBUF)
+    else()
+        find_path(EE_SPM_INCLUDE_DIR sentencepiece_processor.h)
+        find_library(EE_SPM_LIBRARY NAMES sentencepiece)
+        if(NOT EE_SPM_INCLUDE_DIR OR NOT EE_SPM_LIBRARY)
+            message(FATAL_ERROR "SentencePiece not found (apt: libsentencepiece-dev, vcpkg: sentencepiece)")
+        endif()
+        target_include_directories(ee_ctranslate2 SYSTEM INTERFACE "${EE_SPM_INCLUDE_DIR}")
+        target_link_libraries(ee_ctranslate2 INTERFACE CTranslate2::ctranslate2 "${EE_SPM_LIBRARY}")
+    endif()
     target_compile_definitions(ee_ctranslate2 INTERFACE EE_HAVE_CTRANSLATE2=1)
     add_library(ee::ctranslate2 ALIAS ee_ctranslate2)
 endif()
@@ -143,6 +175,41 @@ if(EE_WITH_WEBSOCKET)
     target_link_libraries(ee_websocket INTERFACE $<IF:$<TARGET_EXISTS:ixwebsocket::ixwebsocket>,ixwebsocket::ixwebsocket,ixwebsocket>)
     target_compile_definitions(ee_websocket INTERFACE EE_HAVE_WEBSOCKET=1)
     add_library(ee::websocket ALIAS ee_websocket)
+endif()
+
+# ---- gRPC (streaming server, 5.3): the emotionedge.v1.Translator service -----------------------
+# gRPC is too big to fetch and build here: use an installed one (apt: libgrpc++-dev
+# protobuf-compiler-grpc libprotobuf-dev protobuf-compiler; vcpkg: grpc). The service's code is
+# generated from proto/emotionedge/v1/translator.proto at build time.
+if(EE_WITH_GRPC)
+    find_package(Protobuf REQUIRED)
+    find_package(gRPC CONFIG REQUIRED)
+    if(TARGET gRPC::grpc_cpp_plugin)
+        set(EE_GRPC_PLUGIN $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
+    else()
+        find_program(EE_GRPC_PLUGIN grpc_cpp_plugin REQUIRED)
+    endif()
+    set(_proto_root "${PROJECT_SOURCE_DIR}/proto")
+    set(_proto "${_proto_root}/emotionedge/v1/translator.proto")
+    set(_gen "${CMAKE_BINARY_DIR}/generated")
+    set(_gen_files
+        "${_gen}/emotionedge/v1/translator.pb.cc" "${_gen}/emotionedge/v1/translator.pb.h"
+        "${_gen}/emotionedge/v1/translator.grpc.pb.cc" "${_gen}/emotionedge/v1/translator.grpc.pb.h")
+    add_custom_command(OUTPUT ${_gen_files}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_gen}"
+        COMMAND ${Protobuf_PROTOC_EXECUTABLE} --proto_path=${_proto_root} --cpp_out=${_gen} --grpc_out=${_gen}
+                --plugin=protoc-gen-grpc=${EE_GRPC_PLUGIN} ${_proto}
+        DEPENDS "${_proto}"
+        COMMENT "Generating the emotionedge.v1 gRPC code"
+        VERBATIM)
+    add_library(ee_grpc_proto STATIC
+        "${_gen}/emotionedge/v1/translator.pb.cc" "${_gen}/emotionedge/v1/translator.grpc.pb.cc")
+    target_include_directories(ee_grpc_proto SYSTEM PUBLIC "${_gen}")
+    target_link_libraries(ee_grpc_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
+    target_compile_options(ee_grpc_proto PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>)  # generated code
+    target_compile_definitions(ee_grpc_proto PUBLIC EE_HAVE_GRPC=1)
+    set_target_properties(ee_grpc_proto PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    add_library(ee::grpc_proto ALIAS ee_grpc_proto)
 endif()
 
 # ---- Desktop app (5.3): Dear ImGui + GLFW, HarfBuzz, Noto Sans Devanagari -------------------------
