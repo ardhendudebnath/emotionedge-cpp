@@ -10,6 +10,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -51,16 +52,16 @@ std::string normalize_quotes(std::string_view text) {
 class OnnxLexicalEmotionModel final : public ILexicalEmotionModel {
 public:
     OnnxLexicalEmotionModel(const fs::path& dir, const onnx::SessionConfig& config)
-        : session_(onnx::load_session((dir / "model.onnx").string(), config)),
+        : session_(onnx::shared_session((dir / "model.onnx").string(), config)),
           tokenizer_(ByteLevelBpeTokenizer::from_tokenizer_json(dir / "tokenizer.json")),
           map_(ClassEmotionMap::from_file(dir / "labels.json")) {
         std::ifstream in(dir / "labels.json", std::ios::binary);
         const nlohmann::json j = nlohmann::json::parse(in);
         languages_ = j.value("languages", std::vector<std::string>{"en"});
         max_tokens_ = j.value("max_tokens", std::size_t{128});
-        const std::size_t outputs = session_.GetOutputCount();
+        const std::size_t outputs = session_->GetOutputCount();
         if (outputs == 0) throw ConfigError("lexical model '" + dir.string() + "' has no outputs");
-        output_ = session_.GetOutputNameAllocated(0, allocator_).get();
+        output_ = session_->GetOutputNameAllocated(0, allocator_).get();
     }
 
     bool supports(std::string_view language) const override {
@@ -85,7 +86,7 @@ public:
             Ort::Value::CreateTensor<std::int64_t>(memory_, mask_.data(), mask_.size(), dims.data(), dims.size())};
         const char* input_names[] = {"input_ids", "attention_mask"};
         const char* output_names[] = {output_.c_str()};
-        auto result = session_.Run(Ort::RunOptions{nullptr}, input_names, inputs.data(), inputs.size(), output_names, 1);
+        auto result = session_->Run(Ort::RunOptions{nullptr}, input_names, inputs.data(), inputs.size(), output_names, 1);
         const auto info = result[0].GetTensorTypeAndShapeInfo();
         const float* logits = result[0].GetTensorData<float>();
         last_ = map_.from_logits(std::span<const float>(logits, info.GetElementCount()));
@@ -94,7 +95,7 @@ public:
     }
 
 private:
-    Ort::Session session_;
+    std::shared_ptr<Ort::Session> session_;
     Ort::AllocatorWithDefaultOptions allocator_;
     Ort::MemoryInfo memory_ = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
     ByteLevelBpeTokenizer tokenizer_;

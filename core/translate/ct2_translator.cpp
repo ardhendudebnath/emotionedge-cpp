@@ -8,11 +8,14 @@
 #include <sentencepiece_processor.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "core/runtime/log.hpp"
+#include "core/runtime/shared_cache.hpp"
 #include "core/translate/control_tokens.hpp"
 #include "core/translate/languages.hpp"
 #include "core/translate/translator.hpp"
@@ -34,6 +37,52 @@ std::vector<int> piece_words(const std::vector<std::string>& pieces, std::size_t
     return out;
 }
 
+/// NLLB and its SentencePiece model, loaded once per process for each model, device and setting:
+/// every session translates with it. A translation runs on the first free replica, and replicas
+/// on one device share the weights, so `replicas` sessions can translate at the same moment.
+/// Both are safe to use from several threads.
+struct NllbModel {
+    sentencepiece::SentencePieceProcessor sp;
+    std::unique_ptr<ctranslate2::Translator> translator;
+};
+
+std::shared_ptr<NllbModel> load_nllb(const std::string& model_dir, const std::string& spm, ctranslate2::Device device,
+                                     int gpu, const std::string& compute_type, std::size_t threads, std::size_t replicas,
+                                     bool warmup) {
+    auto model = std::make_shared<NllbModel>();
+    const auto status = model->sp.Load(spm);
+    if (!status.ok()) throw ConfigError("cannot load SentencePiece model '" + spm + "': " + status.ToString());
+    ctranslate2::models::ModelLoader loader(model_dir);
+    loader.device = device;
+    loader.device_indices = {gpu};
+    loader.num_replicas_per_device = replicas;
+    loader.compute_type = ctranslate2::str_to_compute_type(compute_type);
+    ctranslate2::ReplicaPoolConfig pool;
+    pool.num_threads_per_replica = threads;
+    model->translator = std::make_unique<ctranslate2::Translator>(loader, pool);
+    if (device == ctranslate2::Device::CUDA) {
+        log::info("translate: CTranslate2 on cuda (gpu ", gpu, ", ", compute_type, ", ", replicas, " replica(s))");
+    }
+    if (warmup) {
+        // Each replica's first translation pays for its allocations (and, on a GPU, its cuBLAS
+        // setup): not a session's first utterance. One job per replica, all posted at once, so
+        // each idle replica takes one.
+        std::vector<std::string> tokens{std::string(*nllb_code("en"))};
+        std::vector<std::string> pieces;
+        model->sp.Encode("Hello, how are you?", &pieces);
+        tokens.insert(tokens.end(), pieces.begin(), pieces.end());
+        tokens.push_back("</s>");
+        const std::vector<std::string> prefix{std::string(*nllb_code("hi"))};
+        std::vector<std::future<ctranslate2::TranslationResult>> jobs;
+        for (std::size_t i = 0; i < replicas; ++i) {
+            auto posted = model->translator->translate_batch_async({tokens}, {prefix});
+            jobs.push_back(std::move(posted.at(0)));
+        }
+        for (auto& job : jobs) (void)job.get();
+    }
+    return model;
+}
+
 class Ct2Translator final : public ITranslator {
 public:
     Ct2Translator(const std::string& model_dir, const Params& params)
@@ -42,10 +91,8 @@ public:
           // `control_tokens: on` implies it; with `auto` vanilla NLLB gets plain text.
           control_tokens_(params.flag("model_control_tokens", params.str("control_tokens", "auto") == "on")) {
         const std::string spm = params.str("sentencepiece", model_dir + "/sentencepiece.bpe.model");
-        const auto status = sp_.Load(spm);
-        if (!status.ok()) throw ConfigError("cannot load SentencePiece model '" + spm + "': " + status.ToString());
-        ctranslate2::ReplicaPoolConfig pool;
-        pool.num_threads_per_replica = static_cast<std::size_t>(params.integer("threads", 4));
+        const auto threads = static_cast<std::size_t>(params.integer("threads", 4));
+        const auto replicas = static_cast<std::size_t>(std::max<std::int64_t>(1, params.integer("replicas", 1)));
         // device: cpu | cuda | auto. CUDA needs a CTranslate2 built with it and a GPU; without them
         // `auto` quietly, and `cuda` with a warning, run on the CPU, as ORT's providers fall back.
         // The compute type follows the device: compute_type on the CPU, gpu_compute_type on CUDA.
@@ -60,19 +107,13 @@ public:
         const std::string compute_type =
             gpu_visible ? params.str("gpu_compute_type", "int8_float16") : params.str("compute_type", "int8");
         const int gpu = static_cast<int>(params.integer("gpu_id", 0));
-        translator_ = std::make_unique<ctranslate2::Translator>(model_dir, device,
-                                                                ctranslate2::str_to_compute_type(compute_type),
-                                                                std::vector<int>{gpu}, false, pool);
-        if (gpu_visible) log::info("translate: CTranslate2 on cuda (gpu ", gpu, ", ", compute_type, ")");
-        // The first translation pays for allocations (and, on a GPU, cuBLAS setup): not the first
-        // utterance.
-        if (params.flag("warmup", true)) {
-            TranslationRequest warm;
-            warm.source = "Hello, how are you?";
-            warm.source_language = "en";
-            warm.target_language = "hi";
-            (void)translate(warm);
-        }
+        static SharedCache<NllbModel> models;
+        const std::string key = std::filesystem::weakly_canonical(model_dir).string() + '|' + spm + '|' +
+                                (gpu_visible ? "cuda" + std::to_string(gpu) : std::string("cpu")) + '|' + compute_type +
+                                '|' + std::to_string(threads) + '|' + std::to_string(replicas);
+        model_ = models.get(key, [&] {
+            return load_nllb(model_dir, spm, device, gpu, compute_type, threads, replicas, params.flag("warmup", true));
+        });
     }
 
     TranslationResult translate(const TranslationRequest& r) override {
@@ -90,10 +131,11 @@ public:
         while (!control.empty() && control.back() == ' ') control.remove_suffix(1);
         const Markup source = parse_markup(body, r.source_language);
 
+        const sentencepiece::SentencePieceProcessor& sp = model_->sp;
         std::vector<std::string> control_pieces;
-        if (!control.empty()) sp_.Encode(std::string(control), &control_pieces);
+        if (!control.empty()) sp.Encode(std::string(control), &control_pieces);
         std::vector<std::string> pieces;
-        sp_.Encode(source.plain, &pieces);
+        sp.Encode(source.plain, &pieces);
         std::vector<std::string> tokens{std::string(*src_code)};
         tokens.insert(tokens.end(), control_pieces.begin(), control_pieces.end());
         tokens.insert(tokens.end(), pieces.begin(), pieces.end());
@@ -102,7 +144,7 @@ public:
         std::vector<std::string> prefix{std::string(*tgt_code)};
         if (!r.target_prefix.empty()) {
             std::vector<std::string> kept;
-            sp_.Encode(join_text(r.target_prefix, r.target_language), &kept);
+            sp.Encode(join_text(r.target_prefix, r.target_language), &kept);
             prefix.insert(prefix.end(), kept.begin(), kept.end());
         }
 
@@ -110,13 +152,13 @@ public:
         options.beam_size = beam_;
         options.max_decoding_length = 256;
         options.return_attention = r.want_alignment && !source.emphasis.empty();
-        const auto results = translator_->translate_batch({tokens}, {prefix}, options);
+        const auto results = model_->translator->translate_batch({tokens}, {prefix}, options);
 
         TranslationResult out;
         const std::vector<std::string>& hyp = results.at(0).hypotheses.at(0);
         std::vector<std::string> target(hyp.begin() + (hyp.empty() ? 0 : 1), hyp.end());  // drop the language token
         std::erase(target, std::string("</s>"));
-        sp_.Decode(target, &out.text);
+        sp.Decode(target, &out.text);
 
         if (options.return_attention && !results[0].attention.empty()) {
             // attention[t][s]: weight of source token s for hypothesis token t (row 0 = language token).
@@ -149,8 +191,7 @@ public:
     bool preserves_markup() const noexcept override { return false; }
 
 private:
-    sentencepiece::SentencePieceProcessor sp_;
-    std::unique_ptr<ctranslate2::Translator> translator_;
+    std::shared_ptr<NllbModel> model_;  ///< shared with every session on the same model
     std::size_t beam_;
     bool control_tokens_;
 };

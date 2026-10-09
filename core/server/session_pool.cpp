@@ -38,6 +38,7 @@ public:
         so.mode = RunMode::Live;
         so.live_io = &io_;
         so.events = this;
+        so.sessions = options.max_sessions;
         so.output_rate = options.output_rate;
         so.on_ready = [this] { ready_.store(true, std::memory_order_release); };
         session_ = std::make_unique<Session>(std::move(so));  // a bad config throws here

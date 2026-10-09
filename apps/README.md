@@ -94,9 +94,31 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
   next session instead added 300–450 ms to the p95 of half the connections.
 - **Sessions are never reused.** A session learns its speaker: the voice print, the emotion
   state, the closed-loop correction. When the connection ends, its session is discarded.
-- **Memory:** each session holds its own models, about 3 GB of GPU memory. `--max-sessions`
-  refuses connections beyond the limit; warm sessions come on top of it. `--warm 0` loads on
-  connect instead.
+- **Models are shared.** Each model is loaded once per process, and every session uses it:
+  - **Whisper:** one context per model and device, with a decoder state per session.
+  - **NLLB:** one CTranslate2 translator, with a replica per session that may run at once
+    (`--max-sessions`). Replicas share the weights, so sessions translate in parallel. Set
+    `translate.replicas` to override.
+  - **ONNX Runtime models:** one session per model.
+
+  A session still holds its own state: its voice print, emotion state and decoder buffers.
+  `--max-sessions` refuses connections beyond the limit; warm sessions come on top of it.
+  `--warm 0` loads on connect instead.
+
+  On the real engines (RTX 5070 Ti, jfk.wav, `--max-sessions 3`), against each session loading
+  its own models:
+
+  | | Own models | Shared |
+  |---|---|---|
+  | GPU memory, 3 sessions loaded | 6.6 GB | 5.1 GB |
+  | Each session after the first | 1.9 GB | 0.6 GB (the NLLB replicas are allocated with the first) |
+  | 1 client, end to end p50 | 389–438 ms | 397–414 ms |
+  | 3 clients at once, p50 | 1130–1360 ms | 1163–1393 ms |
+
+  Transcripts and translations are the same either way.
+- **Several clients at once are slower.** Three at once on one GPU take about 3× as long per
+  utterance. Most of it is the final translation pass (~50 ms alone, 400–600 ms with three).
+  It waits on the GPU behind the other sessions' work.
 
 The WebSocket protocol, on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate
 (sessions run at 16 kHz; the server resamples other rates):

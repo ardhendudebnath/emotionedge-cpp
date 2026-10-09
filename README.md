@@ -383,7 +383,9 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
      gRPC ([`proto/`](proto/emotionedge/v1/translator.proto)) on one pool of warm sessions, with
      browser, Python and C++ clients, TLS and a bearer token;
    - the desktop app (`emotionedge-desktop`): live captions with shaped Hindi, emotion and the
-     latency budget.
+     latency budget;
+   - one copy of each model for all the server's sessions: 0.6 GB of GPU memory per extra
+     session instead of 1.9 GB.
 
    Next: Android and Jetson builds.
 

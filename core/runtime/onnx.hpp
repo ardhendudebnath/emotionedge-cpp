@@ -54,8 +54,9 @@ struct SessionConfig {
 [[nodiscard]] Ort::Session load_session(const std::string& path, const SessionConfig& config);
 
 /// One session per (model, config) for the whole process, e.g. emotion2vec+ used by both the
-/// emotion engine (2.2) and the consistency check (5.2). ORT sessions are safe to run from
-/// several threads. The session lives while any caller holds it.
+/// emotion engine (2.2) and the consistency check (5.2), or by every session of the streaming
+/// server. ORT sessions are safe to run from several threads. The session lives while any caller
+/// holds it. Every ORT engine loads its model this way.
 [[nodiscard]] std::shared_ptr<Ort::Session> shared_session(const std::string& path, const SessionConfig& config);
 
 }  // namespace ee::onnx

@@ -63,6 +63,7 @@ SessionResult Session::run() {
     services.telemetry = telemetry_.get();
     services.models = models.get();
     services.events = options_.events;
+    services.sessions = options_.sessions;
     const StageRegistry registry = builtin_registry();
 
     switch (options_.mode) {

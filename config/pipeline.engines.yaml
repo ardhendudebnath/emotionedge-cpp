@@ -138,6 +138,9 @@ stages:
       gpu_compute_type: int8_float16   # on CUDA: what the phase-2 quality gate measured
       beam: 2
       threads: 4
+      # Sessions in one process (serve --max-sessions) share one loaded NLLB. It keeps a replica
+      # per session by default, so they translate in parallel; replicas share the weights.
+      # replicas: 1
       expressivity: ${config_dir}/expressivity.yaml
 
   - name: controller

@@ -3,11 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
-#include <map>
 #include <memory>
-#include <mutex>
 
 #include "core/runtime/log.hpp"
+#include "core/runtime/shared_cache.hpp"
 
 namespace ee::onnx {
 
@@ -152,17 +151,12 @@ Ort::Session load_session(const std::string& path, const SessionConfig& config) 
 }
 
 std::shared_ptr<Ort::Session> shared_session(const std::string& path, const SessionConfig& config) {
-    static std::mutex mutex;
-    static std::map<std::string, std::weak_ptr<Ort::Session>> sessions;
+    static SharedCache<Ort::Session> sessions;
     std::string key = std::filesystem::weakly_canonical(path).string() + '|' + std::to_string(config.intra_threads) +
                       '|' + std::to_string(config.inter_threads) + '|' + (config.spin ? "spin" : "idle") + '|' +
                       std::to_string(config.gpu_id) + '|' + config.profile;
     for (const std::string& provider : config.providers) key += '|' + provider;
-    std::lock_guard lock(mutex);
-    if (auto existing = sessions[key].lock()) return existing;
-    auto session = std::make_shared<Ort::Session>(load_session(path, config));
-    sessions[key] = session;
-    return session;
+    return sessions.get(key, [&] { return std::make_shared<Ort::Session>(load_session(path, config)); });
 }
 
 }  // namespace ee::onnx

@@ -3,6 +3,8 @@
 #include <whisper.h>
 
 #include <algorithm>
+#include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -10,6 +12,7 @@
 
 #include "core/asr/asr_engine.hpp"
 #include "core/runtime/log.hpp"
+#include "core/runtime/shared_cache.hpp"
 
 namespace ee {
 
@@ -51,6 +54,20 @@ int auto_audio_ctx(std::size_t samples) {
     return std::clamp(padded, kMinAutoCtx, kFullAudioCtx);
 }
 
+/// The model's weights, loaded once per process for each file and device. Every engine decodes
+/// against them with its own whisper_state (KV caches, compute buffers, backends), which
+/// whisper.cpp allows from several threads at once.
+std::shared_ptr<whisper_context> shared_context(const std::string& model_path, const whisper_context_params& cparams) {
+    static SharedCache<whisper_context> contexts;
+    const std::string key = std::filesystem::weakly_canonical(model_path).string() +
+                            (cparams.use_gpu ? "|gpu" + std::to_string(cparams.gpu_device) : std::string("|cpu"));
+    return contexts.get(key, [&] {
+        whisper_context* ctx = whisper_init_from_file_with_params_no_state(model_path.c_str(), cparams);
+        if (ctx == nullptr) throw ConfigError("cannot load whisper model '" + model_path + "'");
+        return std::shared_ptr<whisper_context>(ctx, whisper_free);
+    });
+}
+
 class WhisperEngine final : public IAsrEngine {
 public:
     WhisperEngine(const std::string& model_path, const Params& params)
@@ -70,8 +87,9 @@ public:
         const std::string device = params.str("device", "auto");
         cparams.use_gpu = params.flag("gpu", device != "cpu");
         cparams.gpu_device = static_cast<int>(params.integer("gpu_id", 0));
-        ctx_ = whisper_init_from_file_with_params(model_path.c_str(), cparams);
-        if (ctx_ == nullptr) throw ConfigError("cannot load whisper model '" + model_path + "'");
+        ctx_ = shared_context(model_path, cparams);
+        state_ = whisper_init_state(ctx_.get());
+        if (state_ == nullptr) throw ConfigError("cannot allocate a whisper state for '" + model_path + "'");
         if (cparams.use_gpu) {
             if (const char* gpu = ggml_gpu_name()) {
                 log::info("asr: whisper.cpp on ", gpu);
@@ -91,7 +109,7 @@ public:
             (void)transcribe(warm);
         }
     }
-    ~WhisperEngine() override { whisper_free(ctx_); }
+    ~WhisperEngine() override { whisper_free_state(state_); }
     WhisperEngine(const WhisperEngine&) = delete;
     WhisperEngine& operator=(const WhisperEngine&) = delete;
 
@@ -127,19 +145,20 @@ public:
         wp.language = language_.c_str();  // "auto" = automatic language ID
         wp.detect_language = false;       // true would detect and stop without transcribing
 
-        if (whisper_full(ctx_, wp, r.audio.data(), static_cast<int>(r.audio.size())) != 0) {
+        whisper_context* ctx = ctx_.get();
+        if (whisper_full_with_state(ctx, state_, wp, r.audio.data(), static_cast<int>(r.audio.size())) != 0) {
             throw std::runtime_error("whisper_full failed");
         }
         AsrResult out;
-        const int lang = whisper_full_lang_id(ctx_);
+        const int lang = whisper_full_lang_id_from_state(state_);
         out.language = lang >= 0 ? whisper_lang_str(lang) : language_;
         if (detect) utterance_language_ = out.language;
-        const whisper_token eot = whisper_token_eot(ctx_);
-        for (int s = 0; s < whisper_full_n_segments(ctx_); ++s) {
-            for (int t = 0; t < whisper_full_n_tokens(ctx_, s); ++t) {
-                const whisper_token_data d = whisper_full_get_token_data(ctx_, s, t);
+        const whisper_token eot = whisper_token_eot(ctx);
+        for (int s = 0; s < whisper_full_n_segments_from_state(state_); ++s) {
+            for (int t = 0; t < whisper_full_n_tokens_from_state(state_, s); ++t) {
+                const whisper_token_data d = whisper_full_get_token_data_from_state(state_, s, t);
                 if (d.id >= eot) continue;  // timestamps, language and control tokens
-                const std::string piece = whisper_full_get_token_text(ctx_, s, t);
+                const std::string piece = whisper_full_get_token_text_from_state(ctx, state_, s, t);
                 if (piece.empty()) continue;
                 const float t0 = static_cast<float>(d.t0) * 0.01f;  // centiseconds
                 const float t1 = static_cast<float>(d.t1) * 0.01f;
@@ -158,7 +177,8 @@ public:
     }
 
 private:
-    whisper_context* ctx_ = nullptr;
+    std::shared_ptr<whisper_context> ctx_;  ///< shared weights
+    whisper_state* state_ = nullptr;        ///< this engine's decoder
     int threads_;
     int beam_;
     int audio_ctx_ = -1;  ///< -1 = auto

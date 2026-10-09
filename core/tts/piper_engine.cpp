@@ -11,6 +11,7 @@
 #include <cmath>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -62,7 +63,7 @@ std::string utf8(char32_t cp) {
 class PiperEngine final : public ITtsEngine {
 public:
     PiperEngine(const std::string& model_path, const Params& params, const ModelRegistry* registry)
-        : session_(onnx::load_session(model_path, onnx::session_config(params, registry))) {
+        : session_(onnx::shared_session(model_path, onnx::session_config(params, registry))) {
         const std::string config_path = params.str("voice_config", model_path + ".json");
         std::ifstream in(config_path);
         if (!in) throw ConfigError("Piper voice config not found: " + config_path);
@@ -157,7 +158,7 @@ private:
             names.push_back("sid");
         }
         const char* output_names[] = {"output"};
-        auto result = session_.Run(Ort::RunOptions{nullptr}, names.data(), tensors.data(), tensors.size(), output_names, 1);
+        auto result = session_->Run(Ort::RunOptions{nullptr}, names.data(), tensors.data(), tensors.size(), output_names, 1);
         const auto info = result[0].GetTensorTypeAndShapeInfo();
         const float* samples = result[0].GetTensorData<float>();
         const std::size_t count = info.GetElementCount();
@@ -165,7 +166,7 @@ private:
         for (std::size_t i = 0; i < count; ++i) audio.push_back(soft_limit(samples[i] * gain, 0.95f));
     }
 
-    Ort::Session session_;
+    std::shared_ptr<Ort::Session> session_;
     Ort::MemoryInfo memory_ = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
     int sample_rate_ = 22050;
     std::string voice_;

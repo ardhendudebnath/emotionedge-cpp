@@ -43,6 +43,8 @@ struct SessionOptions {
     std::function<void()> on_ready;
     /// Any mode: each result as it arrives (RecorderStage's events). Must outlive run().
     IEventListener* events = nullptr;
+    /// Sessions that may run at once in this process, sharing its models (Services::sessions).
+    std::size_t sessions = 1;
 
     // Output (Offline / Realtime).
     int output_rate = 24000;
