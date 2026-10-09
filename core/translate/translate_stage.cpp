@@ -1,5 +1,7 @@
 #include "core/translate/translate_stage.hpp"
 
+#include <string>
+
 #include "core/runtime/log.hpp"
 #include "core/telemetry/telemetry.hpp"
 #include "core/translate/emphasis.hpp"
@@ -31,7 +33,12 @@ std::unique_ptr<ITranslator> make_translator(const Params& params, const ModelRe
 void TranslateStage::open(StageContext& ctx) {
     ctx_ = &ctx;
     const Params& p = ctx.params();
-    translator_.publish(std::shared_ptr<ITranslator>(make_translator(p, ctx.services().models)));
+    // Sessions share one loaded model (CTranslate2). Unless the stage says otherwise, it keeps a
+    // replica per session that may run at once, so they translate in parallel, as when each had
+    // its own model.
+    Params engine = p;
+    if (!engine.has("replicas")) engine.set("replicas", std::to_string(ctx.services().sessions));
+    translator_.publish(std::shared_ptr<ITranslator>(make_translator(engine, ctx.services().models)));
     source_language_ = p.str("source_language", ctx.pipeline().source_language);
     target_language_ = p.str("target_language", ctx.pipeline().target_language);
     if (const std::string path = p.str("expressivity"); !path.empty()) profiles_ = ExpressivityProfiles::load(path);

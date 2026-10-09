@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "core/audio/speech_detector.hpp"
@@ -14,7 +15,7 @@ namespace {
 class SileroSpeechDetector final : public ISpeechDetector {
 public:
     SileroSpeechDetector(const std::string& model_path, const onnx::SessionConfig& config, int sample_rate)
-        : session_(onnx::load_session(model_path, config)), sr_(sample_rate) {
+        : session_(onnx::shared_session(model_path, config)), sr_(sample_rate) {
         if (sample_rate != 16000 && sample_rate != 8000) {
             throw ConfigError("Silero VAD runs at 8 or 16 kHz, not " + std::to_string(sample_rate));
         }
@@ -47,8 +48,8 @@ public:
 
         static constexpr std::array<const char*, 3> kInputNames{"input", "state", "sr"};
         static constexpr std::array<const char*, 2> kOutputNames{"output", "stateN"};
-        session_.Run(Ort::RunOptions{nullptr}, kInputNames.data(), inputs.data(), inputs.size(),
-                     kOutputNames.data(), outputs.data(), outputs.size());
+        session_->Run(Ort::RunOptions{nullptr}, kInputNames.data(), inputs.data(), inputs.size(),
+                      kOutputNames.data(), outputs.data(), outputs.size());
 
         std::swap(state_, next_state_);
         std::copy(input_.end() - static_cast<std::ptrdiff_t>(context_), input_.end(), input_.begin());
@@ -62,7 +63,7 @@ public:
 
 private:
     static constexpr std::size_t kStateSize = 2 * 1 * 128;
-    Ort::Session session_;
+    std::shared_ptr<Ort::Session> session_;  ///< the recurrent state is ours (state_), not the session's
     Ort::MemoryInfo memory_ = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
     std::int64_t sr_;
     std::size_t window_ = 512;

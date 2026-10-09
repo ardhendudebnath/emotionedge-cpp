@@ -68,6 +68,7 @@ for the real engines.
 | Scheduler: thread per stage, core-pinned, lock-free queues + backpressure, drops stale partials, never audio | `runtime/graph.cpp`, `runtime/spsc_queue.hpp`, `runtime/thread_util.cpp` | **done** (deterministic single-thread mode for offline runs and tests) |
 | Telemetry: per-stage p50/p95, RTF, ECS, queue depth, Perfetto trace, Prometheus | `telemetry/*` | **done** |
 | Model registry: SHA-256 verified files, hot-swap per language pair, device profiles | `runtime/model_registry.cpp`, `runtime/sha256.cpp` | **done** |
+| Shared models: each loaded once per process, used by every session (the streaming server's) | `runtime/shared_cache.hpp`, `runtime/onnx.cpp`, `asr/whisper_engine.cpp`, `translate/ct2_translator.cpp` | **done** (phase 5): whisper.cpp shares a context and keeps a decoder state per session. CTranslate2 shares one translator, with a replica per session that may run at once; replicas share the weights. Every ORT model is one session. With 3 sessions on the GPU: 5.1 GB instead of 6.6 GB, 0.6 GB per extra session instead of 1.9 GB, same latency |
 | Config & plugins: YAML pipeline graph, `IStage` for new engines, language packs | `runtime/config.cpp`, `runtime/stage_registry.cpp`, `pipeline/builtin_stages.cpp` | **done** |
 
 ## Threading model (p.2)

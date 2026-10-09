@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string_view>
 
 #include "core/runtime/clock.hpp"
@@ -30,6 +31,9 @@ struct Services {
     const ModelRegistry* models = nullptr;      ///< optional: models/manifest.json
     AudioIo* audio = nullptr;                   ///< optional: capture/playback endpoints
     IEventListener* events = nullptr;           ///< optional: live results (5.3)
+    /// Sessions that may run at once in this process, sharing its models (the streaming server's
+    /// --max-sessions). A shared model that runs one request at a time keeps this many replicas.
+    std::size_t sessions = 1;
 };
 
 /// What a running stage sees of the pipeline: its parameters, the shared services and the

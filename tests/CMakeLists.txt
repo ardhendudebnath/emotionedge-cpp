@@ -30,6 +30,7 @@ add_executable(ee_tests
     runtime/test_graph.cpp
     runtime/test_model_registry.cpp
     runtime/test_sha256.cpp
+    runtime/test_shared_cache.cpp
     runtime/test_spsc_queue.cpp
     runtime/test_telemetry.cpp
     translate/test_translate.cpp
