@@ -9,6 +9,10 @@
 #include <mutex>
 #include <thread>
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 #include "core/audio/audio_io.hpp"
 #include "core/audio/resampler.hpp"
 #include "core/pipeline/recorder.hpp"
@@ -22,6 +26,15 @@ namespace server_detail {
 
 /// Every session takes speech at this rate; streams resample other rates on the way in.
 constexpr int kSessionRate = 16000;
+
+/// A finished session's threads leave its engines' buffers free but scattered over glibc's
+/// per-thread arenas, which keep the pages: RSS rose from 1.8 to 3.0-3.6 GB over 10 sessions on
+/// the real engines and stayed there. Returns the free pages to the system.
+void release_free_memory() noexcept {
+#if defined(__GLIBC__)
+    malloc_trim(0);
+#endif
+}
 
 /// A live pipeline session with its own audio endpoints. It is built, models and all, on its own
 /// thread as soon as it is created. Until a stream takes it, it idles: ready, with no audio.
@@ -230,7 +243,10 @@ private:
 };
 
 SessionStream::SessionStream(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
-SessionStream::~SessionStream() = default;
+SessionStream::~SessionStream() {
+    impl_.reset();  // the session: its graph, threads and engine states
+    server_detail::release_free_memory();
+}
 void SessionStream::audio(std::string_view pcm) { impl_->audio(pcm); }
 void SessionStream::end() { impl_->end(); }
 void SessionStream::wait() { impl_->wait(); }

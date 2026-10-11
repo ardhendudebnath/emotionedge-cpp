@@ -94,6 +94,11 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
   next session instead added 300–450 ms to the p95 of half the connections.
 - **Sessions are never reused.** A session learns its speaker: the voice print, the emotion
   state, the closed-loop correction. When the connection ends, its session is discarded.
+
+  Its memory then goes back to the system (`malloc_trim`, on glibc). Its threads free the
+  engines' buffers into glibc's per-thread arenas, which keep the pages otherwise. Over 10
+  sessions, one at a time, RSS went from 1.8 GB to a 3.0–3.6 GB plateau without the trim, and
+  to 2.1–2.3 GB with it. After 8 sessions with 3 at once: 3.9–4.1 GB without, 2.8 GB with.
 - **Models are shared.** Each model is loaded once per process, and every session uses it:
   - **Whisper:** one context per model and device, with a decoder state per session.
   - **NLLB:** one CTranslate2 translator, with a replica per session that may run at once
@@ -119,6 +124,12 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
 - **Several clients at once are slower.** Three at once on one GPU take about 3× as long per
   utterance. Most of it is the final translation pass (~50 ms alone, 400–600 ms with three).
   It waits on the GPU behind the other sessions' work.
+
+  Skipping the wait-k drafts while other sessions translate made this worse. Three at once went
+  from 4.3 to 6.4 s p50, and the final pass from 1.5 to 3.2 s, interleaved over 3 blocks on a
+  slow day for this laptop. The drafts translate most of the sentence ahead of time. The final
+  pass keeps their prefix, which CTranslate2 reads in one step, and decodes only the rest word
+  by word. Without drafts, the whole sentence is decoded word by word on the busy GPU.
 
 The WebSocket protocol, on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate
 (sessions run at 16 kHz; the server resamples other rates):
