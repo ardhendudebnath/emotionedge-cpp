@@ -17,11 +17,24 @@ RAVDESS. A plan searched at full strength only made the judge hear sadness at fu
 0.7 it heard fear about as often, and in the pipeline it heard fear nearly every time. So every
 candidate is scored, and every gate is checked, at each of --strengths.
 
+Every render is played as the runtime plays it: Kokoro's ~0.4-0.5 s of silence around a clause
+is trimmed, and the final contour is applied to an utterance's last clause only. Judged with the
+padding, a RAVDESS sentence sounded sad (P ~ 1) under the rules and every plan, while the
+pipeline heard neutral, surprise or fear; trimmed, the script hears what the pipeline hears.
+With --clauses, the units are the clauses the TTS stage renders one at a time (the first cut
+after 3 words), not whole sentences.
+
 Guarding against values that only fool the training judge:
 - every candidate is scored on fixed training sentences;
 - the result is compared with the rules on held-out sentences by the training judge, an
   independent V·A·D model (audeering) and Whisper CER;
-- an emotion keeps the rules unless, at every strength, both judges hear it better and CER holds.
+- an emotion keeps the rules unless, at every strength, both judges hear it better, the
+  runtime's ECS rises and CER holds.
+
+The objective (--objective) is the judge's P(emotion), its margin over the likeliest other
+emotion, or the ECS the runtime would report (the judge's classes as V·A·D). The held-out report
+also gives the label the runtime would put on each render. --evaluate-only compares an existing
+plan with the rules; --held-texts evaluates sentences the pipeline got wrong.
 
     python ml/train/learn_controller.py --corpus data/mt_corpus.hi.jsonl \\
         --voice-dir ~/ee-models/tts/kokoro-82m-hi --espeak-lib <libespeak-ng.so.1>
@@ -49,6 +62,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "eval"))
 from learn_style_offsets import EMOJI, REPO, TARGETS, VOICES  # noqa: E402
 from eval_style_offsets import DIMENSIONAL, cer  # noqa: E402
 from emotionedge_ml import emotion_space as es  # noqa: E402
+
+CLAUSE_MARKS = (",", ";", ":", ".", "!", "?", "…", "।", "॥")  # … । ॥
+
+
+def runtime_clauses(text: str, max_first_words: int = 3, min_first_chars: int = 8, min_chars: int = 24,
+                    max_chars: int = 140) -> list:
+    """The clauses the TTS stage renders one at a time (core/tts/clause_chunker.cpp, with
+    pipeline.engines.yaml's max_first_words: 3). Lengths are in UTF-8 bytes, as there."""
+    words = text.split()
+    out, cur = [], []
+    for i, w in enumerate(words):
+        cur.append(w)
+        size = len(" ".join(cur).encode("utf-8"))
+        last = i + 1 == len(words)
+        first_full = not out and max_first_words > 0 and len(cur) >= max_first_words and i + 2 < len(words)
+        ends = w.rstrip("\"')").endswith(CLAUSE_MARKS)
+        if not last and ((ends and size >= (min_first_chars if not out else min_chars)) or size >= max_chars or first_full):
+            out.append(" ".join(cur))
+            cur = []
+    if out and cur and len(" ".join(cur).encode("utf-8")) < min_chars // 2:  # a very short tail joins the clause before
+        out[-1] += " " + " ".join(cur)
+        cur = []
+    if cur:
+        out.append(" ".join(cur))
+    return out
+
 
 CONTROLS = ("speed", "pitch_st", "range", "fall")
 NEUTRAL = {"speed": 1.0, "pitch_st": 0.0, "range": 1.0, "fall": 0.0}
@@ -102,6 +141,23 @@ def main() -> int:
                         help="penalty on Whisper-small's loss above the rules' render (intelligibility)")
     parser.add_argument("--seed", type=int, default=5)
     parser.add_argument("--out-name", default="prosody_controller.json")
+    parser.add_argument("--emotions", nargs="+", default=list(TARGETS), choices=list(TARGETS),
+                        help="emotions to search; the others keep their entries in an existing --out-name")
+    parser.add_argument("--clauses", action="store_true",
+                        help="train and judge on the clauses the runtime renders one at a time (the first cut "
+                             "after 3 words), not whole sentences")
+    parser.add_argument("--objective", choices=("p", "margin", "ecs"), default="p",
+                        help="p: the judge's P(emotion); margin: P(emotion) minus the likeliest other emotion; "
+                             "ecs: how close what the runtime hears (the judge's classes as V·A·D) is to the emotion")
+    parser.add_argument("--evaluate-only", action="store_true",
+                        help="no search: compare the plan in --out-name with the rules on held-out data")
+    parser.add_argument("--start", choices=("rules", "plan"), default="rules",
+                        help="where the search starts: the rules, or the plan in --out-name (to refine it)")
+    parser.add_argument("--voices", nargs="+", default=list(VOICES), choices=list(VOICES),
+                        help="Kokoro voices to render with (each keeps its noise seeds, so subsets compare)")
+    parser.add_argument("--held-texts", nargs="+",
+                        help="held-out sentences instead of the corpus slice, e.g. one the pipeline got wrong "
+                             "(repeat it for more noise seeds)")
     args = parser.parse_args()
     random.seed(args.seed)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -117,12 +173,24 @@ def main() -> int:
     rows = [json.loads(line) for line in args.corpus.read_text(encoding="utf-8").splitlines() if line.strip()]
     texts = sorted({r["tgt"] for r in rows if r.get("tgt") and 6 <= len(r["tgt"].split()) <= 16})
     random.Random(5).shuffle(texts)  # the same order as learn_style_offsets / eval_style_offsets
+    def split(sentences):
+        """(text, phonemes, last clause of its utterance) per unit rendered."""
+        if not args.clauses:
+            return [(t, p, True) for t, p in sentences]
+        out = []
+        for t, _ in sentences:
+            parts = runtime_clauses(t)
+            out += [(c, g2p(c)[0], k + 1 == len(parts)) for k, c in enumerate(parts)]
+        return out
+
     def pick(pool, n):
         out = [(t, g2p(t)[0]) for t in pool if not EMOJI.search(t)]
-        return [(t, p) for t, p in out if 20 <= len(p) <= 200][:n]
+        return split([(t, p) for t, p in out if 20 <= len(p) <= 200][:n])
     train = pick(texts[200:300], args.train)      # outside the offsets' training slice (first 160)
-    held = pick(texts[400:400 + args.val * 3], args.val)  # eval_style_offsets' held-out slice
-    print(f"{len(train)} training / {len(held)} held-out sentences x {len(VOICES)} voices")
+    held = (split([(t, g2p(t)[0]) for t in args.held_texts]) if args.held_texts
+            else pick(texts[400:400 + args.val * 3], args.val))  # eval_style_offsets' held-out slice
+    unit = "clauses" if args.clauses else "sentences"
+    print(f"{len(train)} training / {len(held)} held-out {unit} x {len(args.voices)} voice(s)")
 
     from huggingface_hub import hf_hub_download  # type: ignore
     from kokoro import KModel  # type: ignore
@@ -134,9 +202,11 @@ def main() -> int:
     offsets = {e: torch.tensor(offsets[e], device=dev) for e in args.offset_emotions if e in offsets}
 
     @torch.no_grad()
-    def render(ps, voice, emotion, c, seed, strength=1.0):
+    def render(ps, voice, emotion, c, seed, strength=1.0, final=True):
         """Kokoro with the runtime's prosody controls (ml/export/export_kokoro_onnx.py) and its
-        style offset at `strength` (core/tts/kokoro_engine.cpp)."""
+        style offset at `strength`, played as the runtime plays it (core/tts/kokoro_engine.cpp):
+        the final contour on an utterance's last clause only, and the silence around the clause
+        trimmed."""
         torch.manual_seed(seed)  # the decoder adds noise: the same per candidate, for fair comparisons
         style = packs[voice][len(ps) - 1].unsqueeze(0)
         if emotion in offsets:
@@ -158,10 +228,19 @@ def main() -> int:
         mean = (f0 * voiced).sum() / voiced.sum().clamp(min=1.0)
         pos = torch.arange(f0.shape[-1], dtype=torch.float32, device=dev) / f0.shape[-1]
         ramp = ((pos - 0.7) / 0.3).clamp(0.0, 1.0)
-        shaped = (mean * 2.0 ** (c["pitch_st"] / 12.0) + (f0 - mean) * c["range"]) * (1.0 - 0.25 * c["fall"] * ramp)
+        fall = c["fall"] if final else 0.0
+        shaped = (mean * 2.0 ** (c["pitch_st"] / 12.0) + (f0 - mean) * c["range"]) * (1.0 - 0.25 * fall * ramp)
         f0 = voiced * shaped.clamp(min=10.0) + (1.0 - voiced) * f0
-        audio = m.decoder(m.text_encoder(ids, lengths, mask) @ aln, f0, n, style[:, :128]).squeeze()
-        return audio.float()
+        audio = m.decoder(m.text_encoder(ids, lengths, mask) @ aln, f0, n, style[:, :128]).squeeze().float()
+        # Kokoro's ~0.4-0.5 s of near-silence around a clause is cut: 20 ms kept before the first
+        # sample above -40 dB of the peak, 60 ms after the last (120 ms after an utterance's end).
+        level = audio.abs()
+        loud = torch.nonzero(level >= max(level.max().item() * 0.01, 1e-4)).squeeze(-1)
+        if loud.numel() == 0:
+            return audio
+        begin = max(0, int(loud[0]) - 24000 * 20 // 1000)
+        end = min(audio.numel(), int(loud[-1]) + 1 + 24000 * (120 if final else 60) // 1000)
+        return audio[begin:end]
 
     from funasr import AutoModel  # type: ignore
 
@@ -192,29 +271,71 @@ def main() -> int:
         ids = ids[1:] if ids and ids[0] == start_id else ids
         return whisper(input_features=feats, labels=torch.tensor([ids], device=dev)).loss.item()
 
-    def score(emotion, plan_at, sentences, reference_asr=None):
-        """Judge P(emotion) averaged over the strengths, and Whisper loss per render (for the
-        intelligibility term). plan_at(k) is the plan the runtime applies at strength k."""
-        target = classes.index(TARGETS[emotion])
-        p, losses = [], []
-        for k in args.strengths:
-            for i, (text, ps) in enumerate(sentences):
-                for j, v in enumerate(VOICES):
-                    audio = render(ps, v, emotion, plan_at(k), seed=1000 * i + j, strength=k)
-                    p.append(judge_probs(audio)[target].item())
-                    losses.append(asr_loss(text, audio))
-        p_mean = sum(p) / len(p)
-        if reference_asr is None:
-            return p_mean, losses, p_mean
-        penalty = sum(max(0.0, a - b) for a, b in zip(losses, reference_asr)) / len(losses)
-        return p_mean, losses, p_mean - args.asr_weight * penalty
+    others = {e: [classes.index(TARGETS[o]) for o in TARGETS if o != e] for e in TARGETS}
 
+    def confuser(probs, emotion):
+        """The likeliest other emotion's class index and P."""
+        i = max(others[emotion], key=lambda c: probs[c].item())
+        return i, probs[i].item()
+
+    positions = [None if name.lower() in es.ABSTAIN_CLASSES else es.class_position(name) for name in classes]
+
+    def heard_point(probs):
+        """What the runtime's consistency stage hears in a render: the class positions weighted by
+        probability over the classes that do not abstain (core/emotion/class_mapping.cpp). Its
+        nearest prototype is the label; its distance to the target gives the ECS."""
+        weights = [(probs[i].item(), pos) for i, pos in enumerate(positions) if pos is not None]
+        evidence = sum(w for w, _ in weights)
+        return [sum(w * pos[q] for w, pos in weights) / evidence for q in range(3)]
+
+    def gain(probs, emotion):
+        """One render's score under --objective. `ecs` uses the ECS's distance term itself, on
+        P's scale: from 0 (heard exactly as the emotion) down to about -1 (heard as neutral or a
+        neighbouring emotion)."""
+        p = probs[classes.index(TARGETS[emotion])].item()
+        if args.objective == "p":
+            return p
+        if args.objective == "margin":
+            return p - confuser(probs, emotion)[1]
+        return -es.distance(heard_point(probs), es.PROTOTYPES[emotion])
+
+    def score(emotion, plan_at, sentences, reference_asr=None):
+        """Judge P(emotion) averaged over the strengths, the objective's own score, and Whisper
+        loss per render (for the intelligibility term). plan_at(k) is the plan the runtime
+        applies at strength k."""
+        target = classes.index(TARGETS[emotion])
+        p, gains, losses = [], [], []
+        for k in args.strengths:
+            for i, (text, ps, final) in enumerate(sentences):
+                for j, v in enumerate(VOICES):
+                    if v not in args.voices:
+                        continue
+                    audio = render(ps, v, emotion, plan_at(k), seed=1000 * i + j, strength=k, final=final)
+                    probs = judge_probs(audio)
+                    p.append(probs[target].item())
+                    gains.append(gain(probs, emotion))
+                    losses.append(asr_loss(text, audio))
+        p_mean, gain_mean = sum(p) / len(p), sum(gains) / len(gains)
+        if reference_asr is None:
+            return p_mean, losses, gain_mean
+        penalty = sum(max(0.0, a - b) for a, b in zip(losses, reference_asr)) / len(losses)
+        return p_mean, losses, gain_mean - args.asr_weight * penalty
+
+    out_path = args.voice_dir / args.out_name
+    previous = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else None
     learned, log = {}, {}
     start = time.time()
-    for emotion in TARGETS:
+    for emotion in args.emotions:
+        if (args.evaluate_only or args.start == "plan") and (previous is None or emotion not in previous["controls"]):
+            raise SystemExit(f"no plan for {emotion} in {out_path}")
+        if args.evaluate_only:  # the plan already learned
+            learned[emotion] = previous["controls"][emotion]
+            log[emotion] = {"rules": rules_at(emotion, 1.0)}
+            continue
         p_rules, ref_asr, _ = score(emotion, lambda k: rules_at(emotion, k), train)
-        base = rules_at(emotion, 1.0)  # the search starts from the rules at full strength
-        best = dict(base)
+        base = rules_at(emotion, 1.0)
+        # From the rules at full strength, or from the plan already learned.
+        best = dict(base) if args.start == "rules" else clamp(previous["controls"][emotion])
         _, _, best_obj = score(emotion, lambda k: scaled(best, k), train, ref_asr)
         steps = dict(STEPS)
         evaluations = 2
@@ -233,7 +354,8 @@ def main() -> int:
                             best, best_obj, improved = cand, obj, True
             steps = {name: s / 2 for name, s in steps.items()}
         learned[emotion] = best
-        log[emotion] = {"rules": base, "train_p_rules": p_rules, "train_objective": best_obj, "evaluations": evaluations}
+        log[emotion] = {"rules": base, "train_p_rules": p_rules, "train_objective": best_obj, "evaluations": evaluations,
+                        "objective": args.objective, "units": unit, "start": args.start}
         print(f"{emotion:8s} rules {fmt(base)} P {p_rules:.3f} -> learned {fmt(best)} objective {best_obj:.3f} "
               f"({evaluations} evaluations, {(time.time() - start) / 60:.1f} min)")
 
@@ -270,53 +392,79 @@ def main() -> int:
 
     def held_out(emotion, c, strength):
         target = classes.index(TARGETS[emotion])
-        p, shifts, cers = [], [], []
-        for i, (text, ps) in enumerate(held):
+        p, margins, p_other, shifts, cers, ecs = [], [], {i: 0.0 for i in others[emotion]}, [], [], []
+        heard = {}
+        for i, (text, ps, final) in enumerate(held):
             for j, v in enumerate(VOICES):
+                if v not in args.voices:
+                    continue
                 seed = 50000 + 1000 * i + j
-                audio = render(ps, v, emotion, c, seed, strength)
-                p.append(judge_probs(audio)[target].item())
+                audio = render(ps, v, emotion, c, seed, strength, final)
+                probs = judge_probs(audio)
+                p.append(probs[target].item())
+                margins.append(p[-1] - confuser(probs, emotion)[1])
+                for o in p_other:
+                    p_other[o] += probs[o].item()
+                point = heard_point(probs)
+                ecs.append(es.emotion_consistency(point, es.PROTOTYPES[emotion]))
+                label = es.nearest_label(point)
+                heard[label] = heard.get(label, 0) + 1
                 out, x16 = vad(audio)
-                ref, _ = vad(render(ps, v, None, NEUTRAL, seed))  # same sentence, voice and noise, no emotion
+                ref, _ = vad(render(ps, v, None, NEUTRAL, seed, final=final))  # same text, voice and noise, no emotion
                 shifts.append([o - r for o, r in zip(out, ref)])
                 cers.append(min(1.0, cer(text, asr({"raw": x16, "sampling_rate": 16000},
                                                    generate_kwargs={"language": "hindi", "task": "transcribe"})["text"])))
         shift = [sum(s[q] for s in shifts) / len(shifts) for q in range(3)]
         proto = es.PROTOTYPES[emotion]
         along = sum(s * pr for s, pr in zip(shift, proto)) / math.sqrt(sum(pr * pr for pr in proto))
-        return {"p_judge": sum(p) / len(p), "shift": shift, "shift_along_prototype": along,
-                "cer": sorted(cers)[len(cers) // 2]}
+        top = max(p_other, key=p_other.get)
+        return {"p_judge": sum(p) / len(p), "margin": sum(margins) / len(margins), "confuser": classes[top],
+                "p_confuser": p_other[top] / len(p), "ecs": sum(ecs) / len(ecs),
+                "heard": {k: n / len(p) for k, n in sorted(heard.items())},
+                "shift": shift, "shift_along_prototype": along, "cer": sorted(cers)[len(cers) // 2]}
 
     results, table, adopted = {}, {}, []
-    print("\nheld-out: judge P(target) | independent V·A·D shift vs neutral render (projection on the prototype) | median CER")
-    for emotion in TARGETS:
+    print(f"\nheld-out ({unit}): judge P(target), its margin over the likeliest other emotion, the runtime's ECS | "
+          "independent V·A·D shift vs neutral render (projection on the prototype) | median CER | runtime labels")
+    for emotion in args.emotions:
         results[emotion], adopt = {}, True
         for k in args.strengths:
             r = held_out(emotion, rules_at(emotion, k), k)
             lr = held_out(emotion, scaled(learned[emotion], k), k)
             results[emotion][f"{k:g}"] = {"rules": r, "learned": lr}
             # Adopt only where, at every strength, both judges hear the emotion better on
-            # held-out sentences (the independent one guards against fooling the training judge,
-            # which is also the runtime's consistency judge), at no intelligibility cost.
+            # held-out data (the independent one guards against fooling the training judge,
+            # which is also the runtime's consistency judge), the runtime's ECS rises (so the
+            # emotion is not won at the price of a neighbouring one, as sadness once was by
+            # fear), and intelligibility holds.
             adopt = adopt and (lr["shift_along_prototype"] > r["shift_along_prototype"]
-                               and lr["p_judge"] > r["p_judge"] and lr["cer"] <= r["cer"] + 0.02)
+                               and lr["p_judge"] > r["p_judge"] and lr["ecs"] > r["ecs"]
+                               and lr["cer"] <= r["cer"] + 0.02)
             for name, x in (("rules", r), ("learned", lr)):
-                print(f"  {emotion:8s} x{k:<4g} {name:7s} P {x['p_judge']:.3f} | dV {x['shift'][0]:+.3f} "
+                print(f"  {emotion:8s} x{k:<4g} {name:7s} P {x['p_judge']:.3f} margin {x['margin']:+.3f} "
+                      f"(next: {x['confuser']} {x['p_confuser']:.3f}) ECS {x['ecs']:.3f} | dV {x['shift'][0]:+.3f} "
                       f"dA {x['shift'][1]:+.3f} dD {x['shift'][2]:+.3f} (along {x['shift_along_prototype']:+.3f}) "
-                      f"| CER {x['cer']:.3f}")
+                      f"| CER {x['cer']:.3f} | heard as " + ", ".join(f"{k} {v:.2f}" for k, v in x["heard"].items()))
         table[emotion] = learned[emotion] if adopt else log[emotion]["rules"]
         if adopt:
             adopted.append(emotion)
         print(f"  {emotion:8s} -> {'learned' if adopt else 'rules'}")
+    if args.evaluate_only:
+        return 0
 
     # The runtime applies `controls` only for the emotions in `adopted`; the rest keep the rules.
-    out = {"judge": "emotion2vec/emotion2vec_plus_base", "independent_judge": DIMENSIONAL,
-           "offsets": args.offsets, "offset_emotions": args.offset_emotions, "strengths": args.strengths,
-           "adopted": adopted,
-           "controls": {e: {k: round(v, 4) for k, v in c.items()} for e, c in table.items()},
-           "search": log, "held_out": results}
-    (args.voice_dir / args.out_name).write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
-    print(f"wrote {args.voice_dir / args.out_name}")
+    # Emotions not searched this time keep their entries.
+    out = previous if previous is not None and set(args.emotions) != set(TARGETS) else {
+        "adopted": [], "controls": {}, "search": {}, "held_out": {}}
+    out.update({"judge": "emotion2vec/emotion2vec_plus_base", "independent_judge": DIMENSIONAL,
+                "offsets": args.offsets, "offset_emotions": args.offset_emotions, "strengths": args.strengths})
+    out["adopted"] = [e for e in TARGETS if e in adopted or (e not in args.emotions and e in out["adopted"])]
+    for emotion in args.emotions:
+        out["controls"][emotion] = {k: round(v, 4) for k, v in table[emotion].items()}
+        out["search"][emotion] = log[emotion]
+        out["held_out"][emotion] = results[emotion]
+    out_path.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
+    print(f"wrote {out_path}")
     return 0
 
 
