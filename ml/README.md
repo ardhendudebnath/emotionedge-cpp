@@ -245,7 +245,8 @@ with and without the plan, 4 runs each. The consistency stage judges every outpu
 - **Sadness** gains in V·A·D. Its ECS over all sad clips rises from 0.811–0.822 to
   0.816–0.834, and the share of output clauses heard as non-neutral from 0.20–0.24 to
   0.24–0.28. Arousal does not fall, though, so the label mostly becomes fear, not sadness: the
-  plan moves valence and dominance, but not yet arousal.
+  plan moves valence and dominance, but not yet arousal. (The held-out numbers above were judged
+  on padded renders; see the correction below.)
 - **Surprise** changes nothing measurable; the judge hears neutral either way.
 - **Joy** shows no gain. Its ECS was 0.779–0.794 with its plan and 0.785–0.825 without, but
   identical configurations differ by up to 0.024 between runs.
@@ -263,6 +264,50 @@ with arousal +0.50.
 
 Anger is the opposite case to sadness. The consistency judge liked a low, flat voice that the
 independent judge heard as less aroused, so it keeps the rules.
+
+### Judged as the runtime plays it (correction, 2026-10)
+
+The numbers above came from renders the runtime never plays:
+- **Padding:** Kokoro puts ~0.4–0.5 s of near-silence around every clause, and the runtime trims
+  it (`core/tts/kokoro_engine.cpp`) before playback and before the consistency stage judges it.
+  The script judged the padded audio.
+- **Contour:** the script applied the final contour to every clause. The runtime applies it to
+  an utterance's last clause only.
+
+The padding alone made the judge hear sadness. On the RAVDESS sentence the pipeline turned to
+fear, "बच्चे दरवाजे के पास बात कर रहे हैं।" (`hf_alpha`, the voice the runtime picked, strength 0.7,
+8 noise seeds), the script's verdicts were:
+
+| | Padded render | Played as at runtime | The pipeline |
+|---|---|---|---|
+| rules | sadness, P 1.00 | neutral | neutral, surprise |
+| shipped sadness plan | sadness, P 1.00 | surprise | neutral, fear, surprise |
+| a stronger plan (speed 0.8, +3.8 st) | sadness, P 1.00 | fear | fear, 11 of 12 clauses |
+
+The script now renders as the runtime does, so it hears what the pipeline hears. It also gains
+options to learn and judge on the clauses the TTS stage renders (`--clauses`), against the ECS
+the runtime would report (`--objective ecs`), and to name the label the runtime would put on
+each render.
+
+**Sadness.** Re-judged held out (26 clauses × 4 voices, played as at runtime), at strength
+0.7 / 1.0:
+
+| | Heard as sad | Heard as fear | ECS | Independent shift toward sadness | median CER |
+|---|---|---|---|---|---|
+| rules | 0.02 / 0.19 | 0.02 / 0.03 | 0.684 / 0.701 | +0.240 / +0.322 | 0.211 / 0.244 |
+| shipped plan | 0.16 / 0.65 | 0.02 / 0.06 | 0.703 / 0.879 | +0.295 / +0.429 | 0.200 / 0.250 |
+| ECS search, played as at runtime | 0.26 / 0.85 | 0.07 / 0.11 | 0.731 / 0.943 | +0.342 / +0.569 | 0.250 / 0.244 |
+
+- **The shipped plan holds**, on every measure and at both strengths, but it is far weaker than
+  the padded numbers claimed: heard as sad 16% of the time at strength 0.7, not 46%. It stays.
+- **The new ECS search** (speed 0.8, +2.3 st, range 0.5, rising end) hears more sadness, but
+  its CER at 0.7 rises past the gate, and it adds fear. It was not adopted.
+- **Strength limits the effect.** At the runtime's usual strength of 0.7, every plan barely moves
+  the judge. At full strength, the shipped plan is heard as sad 65% of the time.
+- **Joy and surprise** passed every padded check and showed no gain end to end. The padding is a
+  likely reason. Their plans, and the style offsets (`train/learn_style_offsets.py`,
+  `eval/eval_style_offsets.py`, which render the same way), should be learned and judged again
+  on trimmed audio before more is built on them.
 
 ## Speaker-aware barge-in (P4)
 

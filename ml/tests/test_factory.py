@@ -168,6 +168,19 @@ class ControllerSearchTest(unittest.TestCase):
         self.assertEqual(lc.rules_at("sadness", 1.0), lc.clamp(lc.rules(es.PROTOTYPES["sadness"])))
         self.assertEqual(lc.scaled(r, 0.0), lc.NEUTRAL)
 
+    def test_clauses_match_the_cpp_chunker(self):
+        import learn_controller as lc
+
+        # tests/tts/test_tts.cpp: what the TTS stage renders one clause at a time.
+        self.assertEqual(lc.runtime_clauses("I really cannot believe you did this to me"),
+                         ["I really cannot", "believe you did this to me"])
+        self.assertEqual(lc.runtime_clauses("one two three four"), ["one two three four"])  # >= 2 words left
+        self.assertEqual(lc.runtime_clauses("Well, I looked everywhere for it; then I found it under the sofa. Done!",
+                                            max_first_words=0),
+                         ["Well, I looked everywhere for it;", "then I found it under the sofa. Done!"])
+        self.assertEqual(lc.runtime_clauses("मुझे बहुत अफ़सोस है। मेरा इरादा तुम्हें दुख पहुँचाने का नहीं था।", max_first_words=0),
+                         ["मुझे बहुत अफ़सोस है।", "मेरा इरादा तुम्हें दुख पहुँचाने का नहीं था।"])
+
 
 class BenchmarkReportTest(unittest.TestCase):
     def test_ranges_and_target_verdicts(self):

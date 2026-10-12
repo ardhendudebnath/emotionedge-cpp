@@ -375,8 +375,9 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
 4. **Closed loop & speed** (in progress). Done: GPU execution (CUDA for whisper.cpp, ORT and
    CTranslate2, `pipeline.device: auto`), adaptive pacing of the playout queue, speaker-aware
    barge-in, the echo path's test loop, and a learned prosody plan for sadness.
-   Next: emotion-faithful MT data, an echo canceller tuned on real hardware, and a plan that
-   lowers arousal for sadness.
+   Next: emotion-faithful MT data, an echo canceller tuned on real hardware, and re-learning
+   the prosody plans and style offsets on audio played as the runtime plays it (the training
+   renders kept Kokoro's silent padding, which the judge heard as sadness: `ml/README.md`).
 5. **Ship** (in progress). Done:
    - the public benchmark report (`ml/eval/benchmark.py`, [docs/benchmark.md](docs/benchmark.md));
    - the streaming APIs (`emotionedge serve`, [apps/README.md](apps/README.md)): WebSocket and
