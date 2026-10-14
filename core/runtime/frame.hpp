@@ -47,6 +47,9 @@ inline constexpr std::uint32_t kBargeIn = 1u << 3;      ///< the user started ta
 inline constexpr std::uint32_t kEndOfStream = 1u << 4;  ///< nothing follows on this edge
 inline constexpr std::uint32_t kClauseEnd = 1u << 5;    ///< last audio chunk of a TTS clause
 inline constexpr std::uint32_t kCalibration = 1u << 6;  ///< neutral reference render, not for playout
+/// Utterance audio in which the VAD heard no speech: the endpoint hangover may have begun.
+/// Stages can start their final pass early and keep it if no speech follows (speculate_ms).
+inline constexpr std::uint32_t kQuiet = 1u << 7;
 }  // namespace frame_flags
 
 /// The unit of data exchanged between stages (blueprint p.4: `IStage::process(Frame&)`).

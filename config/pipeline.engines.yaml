@@ -97,6 +97,12 @@ stages:
       audio_ctx: auto         # encoder window sized to the utterance, >= 10 s (0 = full 30 s)
       partial_interval_ms: 500
       min_partial_ms: 1000
+      # Phase 5: the final decode starts 96 ms into the 160 ms endpoint hangover, on the audio so
+      # far plus silence for the rest of it, and is used if no speech follows (dropped, with the
+      # language it detected, if speech resumes). On jfk.wav end to end: p50 397 -> 348 ms, p95
+      # 639 -> 582 ms. On RAVDESS: the same WER (0.042) as without.
+      speculate_ms: 96
+      speculate_pad_ms: 64
 
   - name: emotion
     type: emotion
@@ -112,6 +118,10 @@ stages:
       lexical_model_id: emotion.lexical.distilroberta_en
       lexical_device: cpu         # its INT8 graph: 4 ms per sentence on the CPU, 10 ms on CUDA
       threads: 4
+      # As the ASR stage's final decode: the acoustic final runs in the endpoint hangover, padded
+      # to its length (emotion final 65 -> 22 ms; RAVDESS input accuracy 32 -> 33 of 48).
+      speculate_ms: 96
+      speculate_pad_ms: 64
       # emotion2vec+ also reads valence from the voice, unlike the prosody rules (0.3). Text is
       # still the stronger valence cue, but less so on arousal and dominance.
       fusion:

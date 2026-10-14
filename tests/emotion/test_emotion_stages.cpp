@@ -96,6 +96,30 @@ TEST(EmotionEngineStage, FinalizesWithoutTextWhenNoLexicalModel) {
     EXPECT_TRUE(emotions.back().is_final());
 }
 
+// speculate_ms: the acoustic final runs in the endpoint hangover and is used at the endpoint.
+TEST(EmotionEngineStage, StartsTheAcousticFinalInTheHangover) {
+    test::RecordingContext ctx;
+    ctx.mutable_pipeline().sample_rate = 16000;
+    ctx.mutable_params().set("lexical", "none");
+    ctx.mutable_params().set("speculate_ms", "64");
+    EmotionEngineStage stage;
+    stage.open(ctx);
+    auto audio = excited_speech();
+    const auto speech = static_cast<std::int64_t>(audio.size());
+    test::append(audio, test::silence(0.16, 16000));  // the hangover
+    for (Frame& f : audio_frames(5, audio)) {
+        if (!f.has(frame_flags::kEndpoint) && f.stream_pos >= speech) f.flags |= frame_flags::kQuiet;
+        stage.process(f);
+    }
+    const auto emotions = ctx.of(FrameKind::Emotion);
+    ASSERT_FALSE(emotions.empty());
+    EXPECT_TRUE(emotions.back().is_final());
+    EXPECT_GT(emotions.back().emotion.vad.a, 0.3f);  // still the excited delivery
+    auto& metrics = ctx.telemetry().metrics();
+    EXPECT_EQ(metrics.counter("ee_speculative_finals_kept_total", "", {{"stage", "emotion"}}).value(), 1u);
+    EXPECT_EQ(metrics.counter("ee_speculative_finals_wasted_total", "", {{"stage", "emotion"}}).value(), 0u);
+}
+
 TEST(StateTracker, JoinsTextWithEmotionAndMarksEmphasis) {
     test::RecordingContext ctx;
     ctx.telemetry().begin_utterance(3);

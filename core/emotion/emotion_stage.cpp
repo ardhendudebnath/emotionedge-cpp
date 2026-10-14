@@ -20,6 +20,13 @@ void EmotionEngineStage::open(StageContext& ctx) {
     wait_for_transcript_ = lexical_ != nullptr && p.flag("wait_for_transcript", true);
     transcript_timeout_s_ = p.number("transcript_timeout_ms", 1500.0) / 1000.0;
     max_audio_ = static_cast<std::size_t>(p.number("max_audio_s", 20.0) * rate_);
+    speculate_samples_ = static_cast<std::size_t>(rate_ * p.integer("speculate_ms", 0) / 1000);
+    speculate_pad_ = static_cast<std::size_t>(rate_ * p.integer("speculate_pad_ms", 0) / 1000);
+    auto& metrics = ctx.services().telemetry->metrics();
+    kept_ = &metrics.counter("ee_speculative_finals_kept_total",
+                             "Final passes started in the endpoint hangover and used", {{"stage", "emotion"}});
+    wasted_ = &metrics.counter("ee_speculative_finals_wasted_total",
+                               "Final passes started in the endpoint hangover, dropped as speech resumed", {{"stage", "emotion"}});
 }
 
 EmotionEngineStage::Utterance* EmotionEngineStage::record(std::uint64_t id) {
@@ -35,6 +42,7 @@ EmotionEngineStage::Utterance* EmotionEngineStage::record(std::uint64_t id) {
     Utterance& u = utterances_.emplace_back();
     u.id = id;
     u.prosody = ProsodyTracker(rate_);
+    u.speculation = SpeculationTracker(speculate_samples_);
     u.next_estimate_frame = window_frames_;
     u.header.reset(FrameKind::Emotion);
     u.header.utterance = id;
@@ -83,6 +91,15 @@ void EmotionEngineStage::on_audio(Frame& f) {
             }
             u.next_estimate_frame += hop_frames_;
         }
+        switch (u.speculation.on_audio(f)) {
+        case SpeculationTracker::Event::Start:
+            padded_.assign(u.audio.begin(), u.audio.end());
+            padded_.resize(u.audio.size() + speculate_pad_, 0.0f);
+            u.acoustic_early = acoustic_->estimate(padded_, frames, hop_s);
+            break;
+        case SpeculationTracker::Event::Cancel: wasted_->inc(); break;
+        case SpeculationTracker::Event::None: break;
+        }
     }
     if (f.has(frame_flags::kEndpoint)) {
         u.endpoint = true;
@@ -92,7 +109,12 @@ void EmotionEngineStage::on_audio(Frame& f) {
         u.header.t_origin = f.t_origin;
         u.prosody.flush();
         const auto& frames = u.prosody.frames();
-        u.acoustic_final = acoustic_->estimate(u.audio, frames, hop_s);
+        if (u.speculation.holds()) {  // estimated in the hangover; only quiet audio came since
+            kept_->inc();
+            u.acoustic_final = u.acoustic_early;
+        } else {
+            u.acoustic_final = acoustic_->estimate(u.audio, frames, hop_s);
+        }
         acoustic_->end_utterance(summarize(frames, hop_s));  // adapt to the speaker afterwards
         ctx_->services().telemetry->mark(u.id, telemetry::Milestone::EmotionFinal, ctx_->now());
         try_finalize(u, false);

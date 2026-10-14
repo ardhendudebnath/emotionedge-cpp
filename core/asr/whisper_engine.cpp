@@ -152,7 +152,9 @@ public:
         AsrResult out;
         const int lang = whisper_full_lang_id_from_state(state_);
         out.language = lang >= 0 ? whisper_lang_str(lang) : language_;
-        if (detect) utterance_language_ = out.language;
+        // A tentative decode's language, detected from a fragment, must not stick to the
+        // utterance if the decode is dropped (speech resumed after a pause).
+        if (detect && !r.tentative) utterance_language_ = out.language;
         const whisper_token eot = whisper_token_eot(ctx);
         for (int s = 0; s < whisper_full_n_segments_from_state(state_); ++s) {
             for (int t = 0; t < whisper_full_n_tokens_from_state(state_, s); ++t) {

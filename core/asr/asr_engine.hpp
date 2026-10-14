@@ -18,6 +18,9 @@ struct AsrRequest {
     double utterance_start_s = 0.0; ///< input-timeline position of audio[0]
     bool final = false;             ///< endpoint reached: last decode of this utterance
     std::string_view language;      ///< hint; "" or "auto" = detect
+    /// An early final that may be thrown away (speculate_ms): the engine keeps nothing it learns
+    /// from it, such as the language it detected for the utterance.
+    bool tentative = false;
 };
 
 struct AsrResult {
