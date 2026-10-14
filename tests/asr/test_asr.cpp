@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 
@@ -128,6 +129,59 @@ TEST(StreamingAsrStage, EmitsStablePartialsThenTheFinalTranscript) {
     EXPECT_DOUBLE_EQ(final.src_end, 2.9);
     EXPECT_EQ(final.language, "en");
     EXPECT_GT(ctx.telemetry().rtf().count, 0u);
+    EXPECT_GE(ctx.telemetry().milestone_us(1, telemetry::Milestone::AsrFinal), 0);
+    std::filesystem::remove(script_path);
+}
+
+// speculate_ms: the final decode starts in the endpoint hangover. A quiet run that speech
+// interrupts throws its early decode away; the one that reaches the endpoint is used as it is.
+TEST(StreamingAsrStage, StartsTheFinalDecodeInTheHangover) {
+    const auto script_path = std::filesystem::temp_directory_path() / "ee_asr_speculate.json";
+    std::vector<Word> spoken;
+    const char* names[] = {"one", "two", "three", "four", "five", "six", "seven", "eight"};
+    for (int i = 0; i < 8; ++i) spoken.push_back({names[i], 0.5f + 0.3f * static_cast<float>(i), 0.75f + 0.3f * static_cast<float>(i), 1.0f});
+    std::ofstream(script_path) << make_asr_script(spoken, 0.0, "en");
+
+    test::RecordingContext ctx;
+    ctx.mutable_pipeline().sample_rate = 16000;
+    ctx.mutable_params().set("engine", "scripted");
+    ctx.mutable_params().set("script", script_path.string());
+    ctx.mutable_params().set("speculate_ms", "64");
+    ctx.telemetry().begin_utterance(1);
+    StreamingAsrStage stage;
+    stage.open(ctx);
+
+    // Absolute seconds: a 150 ms pause after "three", then speech to 2.85 s and the hangover.
+    const auto quiet = [](double t) { return (t >= 1.40 && t < 1.55) || t >= 2.95; };
+    const auto audio = test::silence(3.0, 16000);
+    for (std::size_t pos = 0; pos < audio.size(); pos += 512) {
+        Frame f;
+        f.reset(FrameKind::Audio);
+        f.utterance = 1;
+        f.stream_pos = static_cast<std::int64_t>(pos) + 4000;  // utterance starts at 0.25 s
+        f.sample_rate = 16000;
+        f.flags = (pos == 0 ? frame_flags::kSpeechStart : 0u) |
+                  (quiet(0.25 + static_cast<double>(pos) / 16000.0) ? frame_flags::kQuiet : 0u);
+        f.audio.assign(audio.begin() + static_cast<std::ptrdiff_t>(pos),
+                       audio.begin() + static_cast<std::ptrdiff_t>(std::min(audio.size(), pos + 512)));
+        stage.process(f);
+    }
+    Frame endpoint;
+    endpoint.reset(FrameKind::Audio);
+    endpoint.utterance = 1;
+    endpoint.flags = frame_flags::kEndpoint | frame_flags::kFinal;
+    endpoint.src_start = 0.25;
+    endpoint.src_end = 2.9;
+    stage.process(endpoint);
+
+    const auto transcripts = ctx.of(FrameKind::Transcript);
+    ASSERT_FALSE(transcripts.empty());
+    EXPECT_EQ(std::count_if(transcripts.begin(), transcripts.end(), [](const Frame& t) { return t.is_final(); }), 1);
+    EXPECT_TRUE(transcripts.back().is_final());
+    EXPECT_EQ(transcripts.back().text, "one two three four five six seven eight");
+    auto& metrics = ctx.telemetry().metrics();
+    EXPECT_EQ(metrics.counter("ee_speculative_finals_kept_total", "", {{"stage", "asr"}}).value(), 1u);
+    EXPECT_EQ(metrics.counter("ee_speculative_finals_wasted_total", "", {{"stage", "asr"}}).value(), 1u);
     EXPECT_GE(ctx.telemetry().milestone_us(1, telemetry::Milestone::AsrFinal), 0);
     std::filesystem::remove(script_path);
 }

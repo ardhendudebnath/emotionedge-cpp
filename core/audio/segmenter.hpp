@@ -66,7 +66,7 @@ private:
         std::vector<float> samples;
     };
     void handle_window(float probability);
-    void emit_window(const Window& w, bool first);
+    void emit_window(const Window& w, bool first, bool quiet = false);
     void end_utterance();
     [[nodiscard]] TimePoint origin_at(std::int64_t pos) const;
 

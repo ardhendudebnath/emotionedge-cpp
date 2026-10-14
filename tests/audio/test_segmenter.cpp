@@ -106,6 +106,17 @@ TEST(Segmenter, FindsUtterancesWithPrerollAndHangover) {
     auto& telemetry = ctx.telemetry();
     EXPECT_GE(telemetry.milestone_us(1, telemetry::Milestone::SpeechEnd), 0);
     EXPECT_GE(telemetry.milestone_us(2, telemetry::Milestone::Endpoint), 0);
+    // The hangover's windows are marked quiet, so stages can start their final pass there; the
+    // speech's are not.
+    for (std::size_t u = 0; u < 2; ++u) {
+        int quiet = 0;
+        for (const Frame& f : ctx.emitted) {
+            if (f.utterance != u + 1 || !f.has(frame_flags::kQuiet)) continue;
+            ++quiet;
+            EXPECT_GE(static_cast<double>(f.stream_pos) / 16000.0, endpoints[u].src_end - 0.04);
+        }
+        EXPECT_EQ(quiet, 5);  // 160 ms of 32 ms windows
+    }
 }
 
 TEST(Segmenter, EndOfStreamClosesAnOpenUtterance) {

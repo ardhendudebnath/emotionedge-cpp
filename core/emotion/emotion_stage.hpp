@@ -10,7 +10,9 @@
 #include "core/emotion/fusion.hpp"
 #include "core/emotion/lexical.hpp"
 #include "core/emotion/prosody_features.hpp"
+#include "core/runtime/speculation.hpp"
 #include "core/runtime/stage.hpp"
+#include "core/telemetry/metrics.hpp"
 
 namespace ee {
 
@@ -18,7 +20,9 @@ namespace ee {
 /// every `hop_ms` from the last `window_ms` of prosody fused with the latest ASR text. At the
 /// endpoint it fuses the whole utterance acoustically (in parallel with ASR's final decode), and
 /// once the final transcript arrives it emits the final Emotion frame with the utterance's
-/// energy envelope, which the state tracker aligns with word timestamps to find emphasis.
+/// energy envelope, which the state tracker aligns with word timestamps to find emphasis. With
+/// `speculate_ms`, the acoustic final starts that far into the endpoint hangover and is kept if
+/// no speech follows (SpeculationTracker).
 class EmotionEngineStage final : public IStage {
 public:
     void open(StageContext& ctx) override;
@@ -37,6 +41,8 @@ private:
         TimePoint endpoint_seen{};
         ModalityEstimate lexical;
         ModalityEstimate acoustic_final;
+        SpeculationTracker speculation;
+        ModalityEstimate acoustic_early;  ///< the acoustic final started in the hangover
         Frame header;
     };
     Utterance* record(std::uint64_t id);
@@ -57,6 +63,11 @@ private:
     float final_alpha_ = 0.8f;
     bool wait_for_transcript_ = true;
     double transcript_timeout_s_ = 1.5;
+    std::size_t speculate_samples_ = 0;
+    std::size_t speculate_pad_ = 0;  ///< silence appended to an early final (the rest of the hangover)
+    std::vector<float> padded_;
+    telemetry::Counter* kept_ = nullptr;
+    telemetry::Counter* wasted_ = nullptr;
     std::deque<Utterance> utterances_;
     std::deque<std::uint64_t> finished_;
 };

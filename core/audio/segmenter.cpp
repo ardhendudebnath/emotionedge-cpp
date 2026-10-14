@@ -156,16 +156,17 @@ void SegmenterStage::handle_window(float probability) {
         if (tracker_->trailing_quiet_windows() == 0) {
             speech_end_pos_ = current_.pos + static_cast<std::int64_t>(window_);
         }
-        emit_window(current_, false);
+        emit_window(current_, false, tracker_->trailing_quiet_windows() > 0);
         break;
     case EndpointTracker::Action::End:
-        emit_window(current_, false);  // the window that completed the hangover
+        // The window that completed the hangover (or the one that hit max_utterance_s).
+        emit_window(current_, false, tracker_->trailing_quiet_windows() > 0);
         end_utterance();
         break;
     }
 }
 
-void SegmenterStage::emit_window(const Window& w, bool first) {
+void SegmenterStage::emit_window(const Window& w, bool first, bool quiet) {
     Frame& f = ctx_->make(FrameKind::Audio);
     f.utterance = utterance_;
     f.seq = seq_++;
@@ -175,6 +176,7 @@ void SegmenterStage::emit_window(const Window& w, bool first) {
     f.src_start = static_cast<double>(utterance_start_pos_) / rate_;
     f.audio.assign(w.samples.begin(), w.samples.end());
     if (first) f.flags |= frame_flags::kSpeechStart;
+    if (quiet) f.flags |= frame_flags::kQuiet;
     ctx_->emit(f);
 }
 

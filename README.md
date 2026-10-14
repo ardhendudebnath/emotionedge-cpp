@@ -386,7 +386,9 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
    - the desktop app (`emotionedge-desktop`): live captions with shaped Hindi, emotion and the
      latency budget;
    - one copy of each model for all the server's sessions: 0.6 GB of GPU memory per extra
-     session instead of 1.9 GB.
+     session instead of 1.9 GB;
+   - speculative finals: ASR and emotion start their final pass inside the 160 ms endpoint
+     hangover (jfk.wav end to end p50 397 → 348 ms, the same transcripts on RAVDESS).
 
    Next: Android and Jetson builds.
 
