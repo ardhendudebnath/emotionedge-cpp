@@ -172,6 +172,44 @@ End to end on RAVDESS (`eval/eval_ecs.py`, judged by emotion2vec+ in the consist
 - **Why ECS alone misleads:** ECS stays ≈0.82 throughout, since a neutral output still scores
   1 − ‖src‖/2√3.
 
+### Played as at runtime (correction, 2026-10)
+
+Both scripts had judged renders with Kokoro's ~0.4–0.5 s of silent padding, which the runtime
+trims. Both had also used the offset at full strength only, while the controller scales it by
+how far the target reaches toward the emotion: about 0.7 on RAVDESS. Both scripts now trim as
+the runtime does (`played()` in `train/learn_style_offsets.py`), and the learner trains at
+`--strengths 0.7 1.0`.
+
+**The shipped offsets, re-judged** (12 held-out sentences × 4 voices; mean CER, noisy):
+
+| | strength 1.0: independent shift | emotion2vec+ P | strength 0.7: independent shift | emotion2vec+ P |
+|---|---|---|---|---|
+| anger | A +0.12, D +0.09 ✅ | 0.39 | A +0.09, D +0.07 ✅ | 0.04 |
+| joy | A +0.12, D +0.06 ✅ | 0.50 | A +0.08, D +0.04 ✅ | 0.11 |
+| sadness | A −0.30, D −0.24 ✅ | 0.31 | A −0.21, D −0.17 ✅ | 0.00 |
+
+- **The independent judge still agrees:** the offsets move arousal and dominance the right way.
+- **The runtime's judge barely notices:** at the strength the runtime usually applies,
+  emotion2vec+ (the consistency judge) hardly hears them.
+
+**Re-learned on trimmed audio, at strengths 0.7 and 1.0:** emotion2vec+ heard them far more
+(held-out P at 0.7: anger 0.24, joy 0.23, sadness 0.38, surprise 0.32). The independent judge
+did not:
+
+| at strength 0.7 | independent shift | CER |
+|---|---|---|
+| anger | A +0.14, D +0.10 ✅, V +0.04 | 0.51 (shipped: 0.29) |
+| joy | A −0.04, D −0.05 ❌ | 0.30 |
+| sadness | V +0.12, A +0.02 ❌ | 0.96 |
+| surprise | A −0.01 ❌ | 0.50 |
+
+That is the adversarial case the independent check exists for: directions that please the
+training judge without sounding more emotional to another model, and that cost intelligibility.
+They were not adopted, and the shipped offsets stay.
+
+The two judges disagree on trimmed audio. The next step needs a better arbiter than either:
+listening tests, or a third judge that plays no part in training.
+
 `eval/eval_tts_speed.py` sets the cap for the runtime's adaptive pacing. It renders 24 held-out
 sentences with the 4 voices at each speed, and Whisper-small transcribes them:
 
@@ -304,10 +342,16 @@ each render.
   its CER at 0.7 rises past the gate, and it adds fear. It was not adopted.
 - **Strength limits the effect.** At the runtime's usual strength of 0.7, every plan barely moves
   the judge. At full strength, the shipped plan is heard as sad 65% of the time.
-- **Joy and surprise** passed every padded check and showed no gain end to end. The padding is a
-  likely reason. Their plans, and the style offsets (`train/learn_style_offsets.py`,
-  `eval/eval_style_offsets.py`, which render the same way), should be learned and judged again
-  on trimmed audio before more is built on them.
+- **Joy and surprise**, re-judged on trimmed clauses at strength 0.7:
+  - **Joy's plan:** heard as joy 26% → 36% of the time, ECS 0.802 → 0.834. It narrowly fails the
+    CER gate at full strength (0.273 against 0.250 + 0.02).
+  - **Surprise's plan:** heard as surprise 8% → 17%, ECS 0.774 → 0.798, the independent shift
+    toward surprise +0.072 → +0.129, CER unchanged. It passes every held-out check.
+  - **End to end:** the RAVDESS pipeline run with surprise added to `plan_emotions` heard the 18
+    clauses read as surprise as neutral either way (ECS 0.804–0.805, 2 runs per arm). So
+    `plan_emotions` stays sadness-only.
+  - **The style offsets** were re-judged and re-learned on trimmed audio as well (see "Played as
+    at runtime" under the style offsets above). The shipped ones stay.
 
 ## Speaker-aware barge-in (P4)
 
