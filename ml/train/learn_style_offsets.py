@@ -10,6 +10,10 @@ is the classifier's cross-entropy for that emotion on synthesized Hindi, and Δ 
 a ball of radius k times the spread of the voices' own style vectors, so the voice keeps its
 identity. The TTS and the classifier are both differentiable; only Δ is trained.
 
+Renders are judged as the runtime plays them, with Kokoro's silent padding trimmed (played()),
+and at the strengths the runtime applies Δ at (--strengths): the controller scales it by how
+far the target reaches toward the emotion's prototype, about 0.7 on RAVDESS.
+
 Guarding against a Δ that only fools the training judge:
 - the offsets are validated on held-out sentences;
 - ml/eval/eval_style_offsets.py scores them with an independent V·A·D model that played no
@@ -39,6 +43,21 @@ VOICES = ["hf_alpha", "hf_beta", "hm_omega", "hm_psi"]
 TARGETS = {"anger": "angry", "joy": "happy", "sadness": "sad", "fear": "fearful", "surprise": "surprised"}
 
 
+def played(audio, final: bool = True, rate: int = 24000):
+    """A Kokoro render (a 1-D torch tensor) as the runtime plays it (core/tts/kokoro_engine.cpp):
+    the ~0.4-0.5 s of near-silence around a clause is cut, keeping 20 ms before the first sample
+    above -40 dB of the peak and 60 ms after the last (120 ms after an utterance's last clause).
+    Judged with the padding, the judge heard sadness in nearly every render. The span is chosen
+    without gradients, so a differentiable render stays differentiable."""
+    level = audio.detach().abs()
+    loud = (level >= max(level.max().item() * 0.01, 1e-4)).nonzero().squeeze(-1)
+    if loud.numel() == 0:
+        return audio
+    begin = max(0, int(loud[0]) - rate * 20 // 1000)
+    end = min(audio.numel(), int(loud[-1]) + 1 + rate * (120 if final else 60) // 1000)
+    return audio[begin:end]
+
+
 def main() -> int:
     import torch  # type: ignore
     import torchaudio  # type: ignore
@@ -58,6 +77,9 @@ def main() -> int:
                         help="weight of the intelligibility term (Whisper-small loss on the text, above neutral); "
                              "0 lets Δ trade intelligibility for the judge's approval")
     parser.add_argument("--out-name", default="style_offsets.json")
+    parser.add_argument("--strengths", type=float, nargs="+", default=[0.7, 1.0],
+                        help="strengths at which the runtime applies Δ (0.7: RAVDESS median); each training "
+                             "render draws one, and the held-out check reports each")
     args = parser.parse_args()
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -166,28 +188,31 @@ def main() -> int:
         with torch.no_grad():
             for ps in train_ps:
                 for v in VOICES:
-                    neutral_asr[(ps, v)] = asr_loss(ps, synthesize(ps, packs[v][len(ps) - 1].unsqueeze(0))).item()
+                    neutral_asr[(ps, v)] = asr_loss(ps, played(synthesize(ps, packs[v][len(ps) - 1].unsqueeze(0)))).item()
         print(f"neutral Whisper loss on training renders: {sum(neutral_asr.values()) / len(neutral_asr):.3f}")
 
     deltas = {e: torch.zeros(256, device=dev, requires_grad=True) for e in TARGETS}
     opt = torch.optim.Adam(deltas.values(), lr=args.lr * spread)
 
     def evaluate(sentences):
+        """P(emotion) per emotion and strength."""
         out = {}
         with torch.no_grad():
             for e, cls in TARGETS.items():
                 k = classes.index(cls)
-                p = []
-                for ps in sentences:
-                    for v in VOICES:
-                        style = (packs[v][len(ps) - 1] + deltas[e]).unsqueeze(0)
-                        p.append(torch.softmax(judge_logits(synthesize(ps, style)), -1)[k].item())
-                out[e] = sum(p) / len(p)
+                out[e] = {}
+                for strength in args.strengths:
+                    p = []
+                    for ps in sentences:
+                        for v in VOICES:
+                            style = (packs[v][len(ps) - 1] + strength * deltas[e]).unsqueeze(0)
+                            p.append(torch.softmax(judge_logits(played(synthesize(ps, style))), -1)[k].item())
+                    out[e][f"{strength:g}"] = sum(p) / len(p)
         return out
 
     def neutral_baseline(sentences):
         with torch.no_grad():
-            probs = [torch.softmax(judge_logits(synthesize(ps, packs[v][len(ps) - 1].unsqueeze(0))), -1)
+            probs = [torch.softmax(judge_logits(played(synthesize(ps, packs[v][len(ps) - 1].unsqueeze(0)))), -1)
                      for ps in sentences for v in VOICES]
         mean = torch.stack(probs).mean(0)
         return {e: mean[classes.index(c)].item() for e, c in TARGETS.items()}
@@ -200,9 +225,9 @@ def main() -> int:
         for e, cls in TARGETS.items():
             k = classes.index(cls)
             for _ in range(args.batch):
-                ps, v = random.choice(train_ps), random.choice(VOICES)
-                style = (packs[v][len(ps) - 1] + deltas[e]).unsqueeze(0)
-                audio = synthesize(ps, style)
+                ps, v, strength = random.choice(train_ps), random.choice(VOICES), random.choice(args.strengths)
+                style = (packs[v][len(ps) - 1] + strength * deltas[e]).unsqueeze(0)
+                audio = played(synthesize(ps, style))
                 loss = torch.nn.functional.cross_entropy(judge_logits(audio).unsqueeze(0), torch.tensor([k], device=dev))
                 if asr_loss is not None:
                     loss = loss + args.asr_weight * torch.relu(asr_loss(ps, audio) - neutral_asr[(ps, v)])
@@ -218,10 +243,12 @@ def main() -> int:
         if step % 25 == 0 or step == 1:
             print(f"  step {step}/{args.steps}  loss {total / len(TARGETS):.3f}  {(time.time() - start) / step:.1f} s/step")
     held_out = evaluate(val_ps)
-    print("held-out P(target) with offsets:", {k: round(v, 3) for k, v in held_out.items()})
+    print("held-out P(target) with offsets, per strength:",
+          {e: {k: round(p, 3) for k, p in by_k.items()} for e, by_k in held_out.items()})
 
     out = {"judge": "emotion2vec/emotion2vec_plus_base", "radius": args.radius, "spread": spread,
-           "asr_weight": args.asr_weight, "held_out_target_probability": held_out,
+           "asr_weight": args.asr_weight, "strengths": args.strengths, "played_as_at_runtime": True,
+           "held_out_target_probability": held_out,
            "offsets": {e: [round(float(x), 6) for x in d.detach().cpu()] for e, d in deltas.items()}}
     (args.voice_dir / args.out_name).write_text(json.dumps(out) + "\n", encoding="utf-8")
     print(f"wrote {args.voice_dir / args.out_name}")

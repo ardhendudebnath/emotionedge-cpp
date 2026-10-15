@@ -3,7 +3,8 @@
 took no part in training, on sentences it never saw.
 
 For each emotion's offset, every held-out Hindi sentence is rendered in every voice twice: with
-the offset and without (the neutral render). Reported per emotion:
+the offset and without (the neutral render), with Kokoro's silent padding trimmed as the runtime
+plays it. Reported per emotion:
 - the V·A·D shift measured by audeering's wav2vec2 dimensional model (MSP-Podcast), rescaled
   to [-1, 1], and whether each axis moves the way the emotion's prototype points
   (config/emotion_space.json);
@@ -28,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from emotionedge_ml import emotion_space as es  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "train"))
-from learn_style_offsets import EMOJI, REPO, TARGETS, VOICES  # noqa: E402
+from learn_style_offsets import EMOJI, REPO, TARGETS, VOICES, played  # noqa: E402
 
 DIMENSIONAL = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
 
@@ -116,13 +117,14 @@ def main() -> int:
     classes = [tk.split("/")[-1] for tk in auto.kwargs["tokenizer"].token_list]
 
     def render(ps, voice, delta):
+        """As the runtime plays it: the offset at --strength, Kokoro's silent padding trimmed."""
         style = packs[voice][len(ps) - 1].unsqueeze(0)
         if delta is not None:
             style = style + args.strength * torch.tensor(delta, device=dev)
         with torch.no_grad():
             audio, _ = kmodel.forward_with_tokens(
                 torch.tensor([[0, *[kmodel.vocab[c] for c in ps if c in kmodel.vocab], 0]], device=dev), style, 1.0)
-        return torchaudio.functional.resample(audio.float().cpu(), 24000, 16000).numpy()
+        return torchaudio.functional.resample(played(audio.float().cpu()), 24000, 16000).numpy()
 
     def vad(audio16):  # audeering outputs arousal, dominance, valence in [0, 1]
         x = processor(audio16, sampling_rate=16000, return_tensors="pt").input_values.to(dev)

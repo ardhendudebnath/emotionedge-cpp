@@ -59,7 +59,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "eval"))
-from learn_style_offsets import EMOJI, REPO, TARGETS, VOICES  # noqa: E402
+from learn_style_offsets import EMOJI, REPO, TARGETS, VOICES, played  # noqa: E402
 from eval_style_offsets import DIMENSIONAL, cer  # noqa: E402
 from emotionedge_ml import emotion_space as es  # noqa: E402
 
@@ -232,15 +232,7 @@ def main() -> int:
         shaped = (mean * 2.0 ** (c["pitch_st"] / 12.0) + (f0 - mean) * c["range"]) * (1.0 - 0.25 * fall * ramp)
         f0 = voiced * shaped.clamp(min=10.0) + (1.0 - voiced) * f0
         audio = m.decoder(m.text_encoder(ids, lengths, mask) @ aln, f0, n, style[:, :128]).squeeze().float()
-        # Kokoro's ~0.4-0.5 s of near-silence around a clause is cut: 20 ms kept before the first
-        # sample above -40 dB of the peak, 60 ms after the last (120 ms after an utterance's end).
-        level = audio.abs()
-        loud = torch.nonzero(level >= max(level.max().item() * 0.01, 1e-4)).squeeze(-1)
-        if loud.numel() == 0:
-            return audio
-        begin = max(0, int(loud[0]) - 24000 * 20 // 1000)
-        end = min(audio.numel(), int(loud[-1]) + 1 + 24000 * (120 if final else 60) // 1000)
-        return audio[begin:end]
+        return played(audio, final)
 
     from funasr import AutoModel  # type: ignore
 
