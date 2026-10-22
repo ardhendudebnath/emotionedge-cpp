@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "core/runtime/batcher.hpp"
 #include "core/runtime/log.hpp"
 #include "core/runtime/shared_cache.hpp"
 #include "core/translate/control_tokens.hpp"
@@ -37,18 +38,43 @@ std::vector<int> piece_words(const std::vector<std::string>& pieces, std::size_t
     return out;
 }
 
+/// One translation as the model takes it: source and target-prefix tokens, and the options that
+/// must match across a batch.
+struct NllbRequest {
+    std::vector<std::string> source;
+    std::vector<std::string> prefix;
+    std::size_t beam = 2;
+    bool attention = false;
+};
+
 /// NLLB and its SentencePiece model, loaded once per process for each model, device and setting:
-/// every session translates with it. A translation runs on the first free replica, and replicas
-/// on one device share the weights, so `replicas` sessions can translate at the same moment.
-/// Both are safe to use from several threads.
+/// every session translates with it. Both are safe to use from several threads. Sessions that
+/// translate at the same moment either share batches (`batcher`, one replica: on a GPU a batch
+/// costs about what one sentence does) or run on their own replicas (`replicas`, which share
+/// the weights).
 struct NllbModel {
     sentencepiece::SentencePieceProcessor sp;
     std::unique_ptr<ctranslate2::Translator> translator;
+    std::unique_ptr<Batcher<NllbRequest, ctranslate2::TranslationResult>> batcher;
 };
+
+std::vector<ctranslate2::TranslationResult> run_batch(ctranslate2::Translator& translator, std::vector<NllbRequest>& batch) {
+    std::vector<std::vector<std::string>> sources;
+    std::vector<std::vector<std::string>> prefixes;
+    ctranslate2::TranslationOptions options;
+    options.beam_size = batch.front().beam;  // the batcher groups by beam size
+    options.max_decoding_length = 256;
+    for (NllbRequest& r : batch) {
+        sources.push_back(std::move(r.source));
+        prefixes.push_back(std::move(r.prefix));
+        options.return_attention = options.return_attention || r.attention;
+    }
+    return translator.translate_batch(sources, prefixes, options);
+}
 
 std::shared_ptr<NllbModel> load_nllb(const std::string& model_dir, const std::string& spm, ctranslate2::Device device,
                                      int gpu, const std::string& compute_type, std::size_t threads, std::size_t replicas,
-                                     bool warmup) {
+                                     std::size_t max_batch, bool warmup) {
     auto model = std::make_shared<NllbModel>();
     const auto status = model->sp.Load(spm);
     if (!status.ok()) throw ConfigError("cannot load SentencePiece model '" + spm + "': " + status.ToString());
@@ -60,8 +86,16 @@ std::shared_ptr<NllbModel> load_nllb(const std::string& model_dir, const std::st
     ctranslate2::ReplicaPoolConfig pool;
     pool.num_threads_per_replica = threads;
     model->translator = std::make_unique<ctranslate2::Translator>(loader, pool);
+    if (max_batch > 1) {
+        ctranslate2::Translator* translator = model->translator.get();
+        model->batcher = std::make_unique<Batcher<NllbRequest, ctranslate2::TranslationResult>>(
+            [translator](std::vector<NllbRequest>& batch) { return run_batch(*translator, batch); }, max_batch,
+            [](const NllbRequest& r) { return static_cast<int>(r.beam); });
+    }
     if (device == ctranslate2::Device::CUDA) {
-        log::info("translate: CTranslate2 on cuda (gpu ", gpu, ", ", compute_type, ", ", replicas, " replica(s))");
+        log::info("translate: CTranslate2 on cuda (gpu ", gpu, ", ", compute_type, ", ",
+                  max_batch > 1 ? "batches of up to " + std::to_string(max_batch) : std::to_string(replicas) + " replica(s)",
+                  ")");
     }
     if (warmup) {
         // Each replica's first translation pays for its allocations (and, on a GPU, its cuBLAS
@@ -107,12 +141,22 @@ public:
         const std::string compute_type =
             gpu_visible ? params.str("gpu_compute_type", "int8_float16") : params.str("compute_type", "int8");
         const int gpu = static_cast<int>(params.integer("gpu_id", 0));
+        // batch: auto | on | off. Sessions translating at once share batches on one replica (auto:
+        // on a GPU, where a batch costs about what one sentence does), or each gets a replica
+        // (off; on the CPU parallel replicas use more cores).
+        const std::string batch = params.str("batch", "auto");
+        if (batch != "auto" && batch != "on" && batch != "off") throw ConfigError("translate batch must be auto, on or off");
+        const bool batching = replicas > 1 && (batch == "on" || (batch == "auto" && gpu_visible));
+        const std::size_t max_batch = batching ? std::max<std::size_t>(replicas, 2) : 1;
+        const std::size_t replica_count = batching ? 1 : replicas;
         static SharedCache<NllbModel> models;
         const std::string key = std::filesystem::weakly_canonical(model_dir).string() + '|' + spm + '|' +
                                 (gpu_visible ? "cuda" + std::to_string(gpu) : std::string("cpu")) + '|' + compute_type +
-                                '|' + std::to_string(threads) + '|' + std::to_string(replicas);
+                                '|' + std::to_string(threads) + '|' + std::to_string(replica_count) + '|' +
+                                std::to_string(max_batch);
         model_ = models.get(key, [&] {
-            return load_nllb(model_dir, spm, device, gpu, compute_type, threads, replicas, params.flag("warmup", true));
+            return load_nllb(model_dir, spm, device, gpu, compute_type, threads, replica_count, max_batch,
+                             params.flag("warmup", true));
         });
     }
 
@@ -148,21 +192,25 @@ public:
             prefix.insert(prefix.end(), kept.begin(), kept.end());
         }
 
-        ctranslate2::TranslationOptions options;
-        options.beam_size = beam_;
-        options.max_decoding_length = 256;
-        options.return_attention = r.want_alignment && !source.emphasis.empty();
-        const auto results = model_->translator->translate_batch({tokens}, {prefix}, options);
+        const bool want_attention = r.want_alignment && !source.emphasis.empty();
+        NllbRequest request{tokens, prefix, beam_, want_attention};
+        ctranslate2::TranslationResult result;
+        if (model_->batcher) {  // with whatever other sessions are translating
+            result = model_->batcher->submit(std::move(request));
+        } else {
+            std::vector<NllbRequest> one{std::move(request)};
+            result = std::move(run_batch(*model_->translator, one).at(0));
+        }
 
         TranslationResult out;
-        const std::vector<std::string>& hyp = results.at(0).hypotheses.at(0);
+        const std::vector<std::string>& hyp = result.hypotheses.at(0);
         std::vector<std::string> target(hyp.begin() + (hyp.empty() ? 0 : 1), hyp.end());  // drop the language token
         std::erase(target, std::string("</s>"));
         sp.Decode(target, &out.text);
 
-        if (options.return_attention && !results[0].attention.empty()) {
+        if (want_attention && !result.attention.empty()) {
             // attention[t][s]: weight of source token s for hypothesis token t (row 0 = language token).
-            const auto& attention = results[0].attention[0];
+            const auto& attention = result.attention[0];
             const std::vector<int> src_word = piece_words(tokens, 1 + control_pieces.size());  // skip lang + prefix
             const std::vector<int> tgt_word = piece_words(hyp, 1);
             for (std::uint16_t s : source.emphasis) {

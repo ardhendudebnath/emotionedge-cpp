@@ -32,7 +32,8 @@ struct Services {
     AudioIo* audio = nullptr;                   ///< optional: capture/playback endpoints
     IEventListener* events = nullptr;           ///< optional: live results (5.3)
     /// Sessions that may run at once in this process, sharing its models (the streaming server's
-    /// --max-sessions). A shared model that runs one request at a time keeps this many replicas.
+    /// --max-sessions). A shared model that runs one request at a time batches up to this many
+    /// requests (on a GPU) or keeps this many replicas.
     std::size_t sessions = 1;
 };
 

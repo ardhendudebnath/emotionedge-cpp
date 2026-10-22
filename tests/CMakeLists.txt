@@ -26,6 +26,7 @@ add_executable(ee_tests
     prosody/test_controller.cpp
     server/test_security.cpp
     server/test_session_pool.cpp
+    runtime/test_batcher.cpp
     runtime/test_config.cpp
     runtime/test_graph.cpp
     runtime/test_model_registry.cpp

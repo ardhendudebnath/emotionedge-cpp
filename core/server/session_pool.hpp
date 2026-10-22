@@ -76,7 +76,8 @@ public:
         std::vector<std::pair<std::string, std::string>> overrides;  ///< "stage.param" -> value
         /// Sessions share one copy of each model; each still holds its own decoder state and
         /// buffers, about 0.6 GB of GPU memory per session on the real engines. Shared models
-        /// that serve one request at a time keep this many replicas (Services::sessions).
+        /// that serve one request at a time batch up to this many requests on a GPU, or keep this
+        /// many replicas (Services::sessions).
         std::size_t max_sessions = 1;
         /// Sessions kept loaded for the next clients, on top of max_sessions in memory.
         /// 0 = load on connect (seconds before ready).

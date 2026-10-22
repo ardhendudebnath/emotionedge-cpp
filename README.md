@@ -390,7 +390,9 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
    - one copy of each model for all the server's sessions: 0.6 GB of GPU memory per extra
      session instead of 1.9 GB;
    - speculative finals: ASR and emotion start their final pass inside the 160 ms endpoint
-     hangover (jfk.wav end to end p50 397 → 348 ms, the same transcripts on RAVDESS).
+     hangover (jfk.wav end to end p50 397 → 348 ms, the same transcripts on RAVDESS);
+   - translations batched across the server's sessions on the GPU: three clients at once
+     991 → 582 ms end to end p50, one client unchanged.
 
    Next: Android and Jetson builds.
 
