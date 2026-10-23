@@ -101,9 +101,10 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
   to 2.1–2.3 GB with it. After 8 sessions with 3 at once: 3.9–4.1 GB without, 2.8 GB with.
 - **Models are shared.** Each model is loaded once per process, and every session uses it:
   - **Whisper:** one context per model and device, with a decoder state per session.
-  - **NLLB:** one CTranslate2 translator, with a replica per session that may run at once
-    (`--max-sessions`). Replicas share the weights, so sessions translate in parallel. Set
-    `translate.replicas` to override.
+  - **NLLB:** one CTranslate2 translator. On a GPU, sentences that sessions translate at the
+    same moment run as one batch (`translate.batch: auto`). On the CPU, each session that may
+    run at once (`--max-sessions`) gets a replica, and the replicas share the weights.
+    `translate.batch` and `translate.replicas` override.
   - **ONNX Runtime models:** one session per model.
 
   A session still holds its own state: its voice print, emotion state and decoder buffers.
@@ -121,9 +122,23 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
   | 3 clients at once, p50 | 1130–1360 ms | 1163–1393 ms |
 
   Transcripts and translations are the same either way.
-- **Several clients at once are slower.** Three at once on one GPU take about 3× as long per
-  utterance. Most of it is the final translation pass (~50 ms alone, 400–600 ms with three).
-  It waits on the GPU behind the other sessions' work.
+- **Translations are batched across sessions.** A sentence that a session sends while the
+  model is busy waits for the running batch. It then goes in the next one, with every other
+  session's sentence that arrived meanwhile (`core/runtime/batcher.hpp`). On an idle model
+  nothing waits. The GPU decodes three sentences in one batch in about the time one takes,
+  where three replicas running side by side each took several times as long.
+
+  jfk.wav on the real engines, interleaved over 3 blocks (end to end p50, medians):
+
+  | | Replica per session | Batched |
+  |---|---|---|
+  | 1 client | 348 ms | 348 ms |
+  | 3 clients at once | 991 ms (926–1098) | **582 ms** (549–614) |
+  | 3 at once, p95 | 1226–1546 ms | 807–860 ms |
+  | final translation pass, 3 at once | 381 ms | 150 ms |
+
+  Every translation is the same either way, solo or with three at once. Three at once still
+  take about 1.7× as long as one, since the other stages share the GPU too.
 
   Skipping the wait-k drafts while other sessions translate made this worse. Three at once went
   from 4.3 to 6.4 s p50, and the final pass from 1.5 to 3.2 s, interleaved over 3 blocks on a
