@@ -119,6 +119,57 @@ def rules_at(emotion: str, k: float) -> dict:
     return clamp(rules([k * x for x in es.PROTOTYPES[emotion]]))
 
 
+class KokoroPlayback:
+    """Kokoro with the runtime's prosody controls (ml/export/export_kokoro_onnx.py) and its style
+    offsets, played as the runtime plays it (core/tts/kokoro_engine.cpp): the final contour on an
+    utterance's last clause only, and the silence around the clause trimmed. Also used by
+    eval/make_listening_test.py, so listeners hear what the search judged."""
+
+    def __init__(self, offsets_file: Path, offset_emotions, device: str):
+        import torch  # type: ignore
+        from huggingface_hub import hf_hub_download  # type: ignore
+        from kokoro import KModel  # type: ignore
+
+        self.torch, self.dev = torch, device
+        self.m = KModel(repo_id=REPO).to(device).eval()
+        self.packs = {v: torch.load(hf_hub_download(REPO, f"voices/{v}.pt"), weights_only=True).squeeze(1).float().to(device)
+                      for v in VOICES}
+        offsets = json.loads(Path(offsets_file).read_text(encoding="utf-8"))["offsets"]
+        self.offsets = {e: torch.tensor(offsets[e], device=device) for e in offset_emotions if e in offsets}
+
+    def render(self, ps, voice, emotion, c, seed, strength=1.0, final=True):
+        """One clause (phonemes `ps`) in `voice`, with plan `c` and `emotion`'s style offset at
+        `strength`. The decoder adds noise: `seed` fixes it, for fair comparisons."""
+        torch, m, dev = self.torch, self.m, self.dev
+        with torch.no_grad():
+            torch.manual_seed(seed)
+            style = self.packs[voice][len(ps) - 1].unsqueeze(0)
+            if emotion in self.offsets:
+                style = style + strength * self.offsets[emotion]
+            ids = torch.tensor([[0, *[m.vocab[x] for x in ps if x in m.vocab], 0]], device=dev)
+            t = ids.shape[1]
+            lengths = torch.full((1,), t, device=dev, dtype=torch.long)
+            mask = torch.zeros((1, t), dtype=torch.bool, device=dev)
+            d_en = m.bert_encoder(m.bert(ids, attention_mask=(~mask).int())).transpose(-1, -2)
+            s = style[:, 128:]
+            d = m.predictor.text_encoder(d_en, s, lengths, mask)
+            x, _ = m.predictor.lstm(d)
+            dur = torch.round(torch.sigmoid(m.predictor.duration_proj(x)).sum(-1) / c["speed"]).clamp(min=1).long().squeeze(0)
+            ends = torch.cumsum(dur, 0)
+            frames = torch.arange(int(ends[-1]), device=dev).unsqueeze(0)
+            aln = ((frames >= (ends - dur).unsqueeze(1)) & (frames < ends.unsqueeze(1))).float().unsqueeze(0)
+            f0, n = m.predictor.F0Ntrain(d.transpose(-1, -2) @ aln, s)
+            voiced = (f0 > 10.0).float()
+            mean = (f0 * voiced).sum() / voiced.sum().clamp(min=1.0)
+            pos = torch.arange(f0.shape[-1], dtype=torch.float32, device=dev) / f0.shape[-1]
+            ramp = ((pos - 0.7) / 0.3).clamp(0.0, 1.0)
+            fall = c["fall"] if final else 0.0
+            shaped = (mean * 2.0 ** (c["pitch_st"] / 12.0) + (f0 - mean) * c["range"]) * (1.0 - 0.25 * fall * ramp)
+            f0 = voiced * shaped.clamp(min=10.0) + (1.0 - voiced) * f0
+            audio = m.decoder(m.text_encoder(ids, lengths, mask) @ aln, f0, n, style[:, :128]).squeeze().float()
+            return played(audio, final)
+
+
 def main() -> int:
     import torch  # type: ignore
     import torchaudio  # type: ignore
@@ -192,47 +243,7 @@ def main() -> int:
     unit = "clauses" if args.clauses else "sentences"
     print(f"{len(train)} training / {len(held)} held-out {unit} x {len(args.voices)} voice(s)")
 
-    from huggingface_hub import hf_hub_download  # type: ignore
-    from kokoro import KModel  # type: ignore
-
-    m = KModel(repo_id=REPO).to(dev).eval()
-    packs = {v: torch.load(hf_hub_download(REPO, f"voices/{v}.pt"), weights_only=True).squeeze(1).float().to(dev)
-             for v in VOICES}
-    offsets = json.loads((args.voice_dir / args.offsets).read_text(encoding="utf-8"))["offsets"]
-    offsets = {e: torch.tensor(offsets[e], device=dev) for e in args.offset_emotions if e in offsets}
-
-    @torch.no_grad()
-    def render(ps, voice, emotion, c, seed, strength=1.0, final=True):
-        """Kokoro with the runtime's prosody controls (ml/export/export_kokoro_onnx.py) and its
-        style offset at `strength`, played as the runtime plays it (core/tts/kokoro_engine.cpp):
-        the final contour on an utterance's last clause only, and the silence around the clause
-        trimmed."""
-        torch.manual_seed(seed)  # the decoder adds noise: the same per candidate, for fair comparisons
-        style = packs[voice][len(ps) - 1].unsqueeze(0)
-        if emotion in offsets:
-            style = style + strength * offsets[emotion]
-        ids = torch.tensor([[0, *[m.vocab[x] for x in ps if x in m.vocab], 0]], device=dev)
-        t = ids.shape[1]
-        lengths = torch.full((1,), t, device=dev, dtype=torch.long)
-        mask = torch.zeros((1, t), dtype=torch.bool, device=dev)
-        d_en = m.bert_encoder(m.bert(ids, attention_mask=(~mask).int())).transpose(-1, -2)
-        s = style[:, 128:]
-        d = m.predictor.text_encoder(d_en, s, lengths, mask)
-        x, _ = m.predictor.lstm(d)
-        dur = torch.round(torch.sigmoid(m.predictor.duration_proj(x)).sum(-1) / c["speed"]).clamp(min=1).long().squeeze(0)
-        ends = torch.cumsum(dur, 0)
-        frames = torch.arange(int(ends[-1]), device=dev).unsqueeze(0)
-        aln = ((frames >= (ends - dur).unsqueeze(1)) & (frames < ends.unsqueeze(1))).float().unsqueeze(0)
-        f0, n = m.predictor.F0Ntrain(d.transpose(-1, -2) @ aln, s)
-        voiced = (f0 > 10.0).float()
-        mean = (f0 * voiced).sum() / voiced.sum().clamp(min=1.0)
-        pos = torch.arange(f0.shape[-1], dtype=torch.float32, device=dev) / f0.shape[-1]
-        ramp = ((pos - 0.7) / 0.3).clamp(0.0, 1.0)
-        fall = c["fall"] if final else 0.0
-        shaped = (mean * 2.0 ** (c["pitch_st"] / 12.0) + (f0 - mean) * c["range"]) * (1.0 - 0.25 * fall * ramp)
-        f0 = voiced * shaped.clamp(min=10.0) + (1.0 - voiced) * f0
-        audio = m.decoder(m.text_encoder(ids, lengths, mask) @ aln, f0, n, style[:, :128]).squeeze().float()
-        return played(audio, final)
+    render = KokoroPlayback(args.voice_dir / args.offsets, args.offset_emotions, dev).render
 
     from funasr import AutoModel  # type: ignore
 
