@@ -353,6 +353,26 @@ each render.
   - **The style offsets** were re-judged and re-learned on trimmed audio as well (see "Played as
     at runtime" under the style offsets above). The shipped ones stay.
 
+## Listening test (emotion out)
+
+The two automatic judges disagree on audio played as at runtime, so people decide.
+`eval/make_listening_test.py` renders pairs of one sentence in one voice, with the same decoder
+noise:
+- **Plain:** no style offset, Kokoro's own prosody.
+- **Emotional:** the emotion's shipped style offset and the controller's plan (the rules; for
+  sadness, the learned plan), at the runtime's usual strength 0.7 and at 1.0.
+
+Clips are rendered by the same `KokoroPlayback` the plan search judges with. They are trimmed as
+at runtime and matched in loudness, so the choice rests on the voice. The sentences say nothing
+emotional: RAVDESS's two statements in Hindi, and one more of the kind. The default set is 3
+sentences × 2 voices (female `hf_alpha`, male `hm_omega`) × anger, joy and sadness. That is 30
+pairs at 0.7, with the first two sentences also at 1.0.
+
+Listeners pick the clip that sounds more angry, happy or sad, or "no difference". The pairs come
+in a shuffled order with the sides flipped at random, per listener. The test runs as a shared
+page whose answers tally across listeners. A setting carries its emotion when most people pick
+its clip.
+
 ## Speaker-aware barge-in (P4)
 
 `eval/eval_speaker_verification.py` calibrates the speaker stage's `VoiceGate`. The 24 RAVDESS
