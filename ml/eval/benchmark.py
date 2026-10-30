@@ -480,7 +480,9 @@ def render(results: dict) -> str:
             "- **The machine's state matters.** On this laptop the same binary and config measured 1127–1294 ms "
             "p95 on jfk.wav in one session and 614–631 ms in another, taking 3–5× the CPU time for the same "
             "work. Each device gets an unrecorded warm-up run first, and every run logs the load average and "
-            "the GPU's temperature as it starts. Keep the machine otherwise idle, and on mains power.",
+            "the GPU's temperature as it starts. Keep the machine otherwise idle, and on mains power: with "
+            "other work running (load average up to 3.9, another 2.9 GB on the GPU in one run), back-to-back "
+            "sentences on the GPU measured 1004–1840 ms p95, and 926–975 ms on the quiet machine.",
             "- **Peak RAM and CPU time** are the process's own (`wait4`). GPU memory is the device's use during "
             "the run, less its use before (`nvidia-smi`), so other processes can inflate it.",
             "- **The emotion-transfer set** is 48 RAVDESS clips (4 actors × 8 emotions + neutral, one sentence). "

@@ -15,9 +15,9 @@ emotion-token NLLB LoRA) and emotion out (Kokoro-82M with learned style offsets)
 progress: the models run on a GPU when there is one (see [Real engines](#real-engines)).
 
 [docs/benchmark.md](docs/benchmark.md) has the current numbers, re-measured with one command. On
-an RTX 5070 Ti laptop GPU, jfk.wav runs end to end in 381–389 ms p50 and 628–647 ms p95 (target
-< 800 ms p95). Back-to-back speech still misses the target (1648–1687 ms p95), and so does a CPU
-alone (1412–1489 ms on jfk.wav).
+an RTX 5070 Ti laptop GPU, jfk.wav runs end to end in 340–389 ms p50 and 590–641 ms p95 (target
+< 800 ms p95). Back-to-back speech still misses the target, though by less (926–975 ms p95, from
+1648–1687 before speculative finals), and so does a CPU alone (1608–1720 ms on jfk.wav).
 
 ![emotionedge-desktop: captions with the emotion read from the voice, the Hindi translation and its ECS, and the live latency budget](docs/images/desktop.png)
 
