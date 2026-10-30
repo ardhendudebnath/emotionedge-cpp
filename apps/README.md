@@ -159,9 +159,10 @@ The WebSocket protocol, on `ws://HOST:PORT/?rate=16000`, where `rate` is the cli
 | server → client | binary | the translated speech: mono 16-bit little-endian PCM at `output_rate` (24 kHz), in 10 ms blocks. Silence is not sent |
 
 Measured through the server on the real engines (RTX 5070 Ti), the server's own end-to-end
-telemetry matches in-process runs ([docs/benchmark.md](../docs/benchmark.md)):
+telemetry matched the in-process runs of the time (the 2026-10-05 [benchmark](../docs/benchmark.md),
+before speculative finals):
 
-| Input | End to end through the server | In-process benchmark |
+| Input | End to end through the server | In-process benchmark, 2026-10-05 |
 |---|---|---|
 | jfk.wav | p50 373 ms, p95 610 ms | p50 381–389 ms, p95 628–647 ms |
 | 3 back-to-back sentences | p50 877 ms, p95 1655 ms | p50 844–893 ms, p95 1648–1687 ms |
