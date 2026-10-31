@@ -42,7 +42,7 @@ for the real engines.
 | Box | Code | Status |
 |---|---|---|
 | 3.1 Context & emotion state: join text + emotion, hysteresis, emphasis = energy peaks on word timestamps | `emotion/state_tracker.cpp`, `emotion/fusion.cpp` | **done** |
-| 3.2 Emotion-aware translation: NLLB-200 INT8 on CTranslate2, `<emo=… a=… reg=…>` control tokens, wait-k drafts, final re-translation keeping the prefix, emphasis → target words, glossary, neutral fallback below τ | `translate/*` | **done**; phrasebook **stand-in**; CTranslate2 + SentencePiece **adapter** (`EE_WITH_CTRANSLATE2`); phase-2 NLLB-600M LoRA trained on the control prefix (`ml/train/finetune_nllb_lora.py`). MT output is stripped of any echoed `<emo=…>` span before TTS and captions |
+| 3.2 Emotion-aware translation: NLLB-200 INT8 on CTranslate2, `<emo=… a=… reg=…>` control tokens, wait-k drafts, final re-translation keeping the prefix, emphasis → target words, glossary, neutral fallback below τ | `translate/*` | **done**; phrasebook **stand-in**; CTranslate2 + SentencePiece **adapter** (`EE_WITH_CTRANSLATE2`); phase-2 NLLB-600M LoRA trained on the control prefix (`ml/train/finetune_nllb_lora.py`). MT output is stripped of any echoed `<emo=…>` span before TTS and captions. Streaming final pass (phase 5, `stream: on` in `pipeline.cpu-fast.yaml`, off by default): the first `stream_words` words are decoded greedily and sent ahead (`frame_flags::kLeading`), the controller (on T6, free while T4 decodes and T5 synthesizes) plans them and the TTS speaks their first clause while the rest is translated with them as prefix. Emphasis is aligned by NLLB's attention (the `<em>` markup reaches the adapter: `ITranslator::reads_markup`) |
 | 3.3 Expressivity profiles per language | `prosody/expressivity.cpp`, `config/expressivity.yaml` | **done** (values are placeholders to calibrate) |
 
 ### 04 · Express
@@ -79,9 +79,9 @@ for the real engines.
 | T1 | DSP + VAD, 20 ms tick | `frontend`, `segmenter` |
 | T2 | streaming ASR | `asr` |
 | T3 | emotion engine | `emotion`, `speaker`, `consistency` |
-| T4 | state + MT + controller | `state`, `translate`, `controller` |
+| T4 | state + MT + controller | `state`, `translate`, `controller` (`pipeline.engines.yaml`: `state`, `translate`) |
 | T5 | TTS + vocoder | `tts` |
-| T6 | playback | `playback`, `recorder` |
+| T6 | playback | `playback`, `recorder` (`pipeline.cpu-fast.yaml`: also `controller`, so it plans a streamed translation's leading words while T4 decodes the rest and T5 synthesizes) |
 | T7 | telemetry flush | built into the scheduler (`telemetry.flush_ms`) |
 
 A thread pins to a core set (`cores: [2, 3, 4, 5]`, or `core: N`). Worker threads that an engine

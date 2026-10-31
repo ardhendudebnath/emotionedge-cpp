@@ -38,6 +38,37 @@ std::vector<int> piece_words(const std::vector<std::string>& pieces, std::size_t
     return out;
 }
 
+/// Each emphasized source word with the target word that attends to it most. `attention[t][s]`
+/// is target token t's weight on source token s (row 0: the language token); `hyp` the target
+/// tokens it covers, language token first; the source's words start after `skip` tokens.
+std::vector<std::pair<std::uint16_t, std::uint16_t>> align_emphasis(const std::vector<std::vector<float>>& attention,
+                                                                    const std::vector<std::string>& tokens,
+                                                                    std::size_t skip, const std::vector<std::string>& hyp,
+                                                                    const std::vector<std::uint16_t>& emphasis) {
+    std::vector<std::pair<std::uint16_t, std::uint16_t>> out;
+    const std::vector<int> src_word = piece_words(tokens, skip);
+    const std::vector<int> tgt_word = piece_words(hyp, 1);
+    for (std::uint16_t s : emphasis) {
+        int best_word = -1;
+        float best = 0.0f;
+        std::vector<float> per_word(hyp.size(), 0.0f);
+        for (std::size_t t = 0; t < attention.size() && t < hyp.size(); ++t) {
+            if (tgt_word[t] < 0) continue;
+            for (std::size_t k = 0; k < attention[t].size() && k < src_word.size(); ++k) {
+                if (src_word[k] == static_cast<int>(s)) per_word[static_cast<std::size_t>(tgt_word[t])] += attention[t][k];
+            }
+        }
+        for (std::size_t w = 0; w < per_word.size(); ++w) {
+            if (per_word[w] > best) {
+                best = per_word[w];
+                best_word = static_cast<int>(w);
+            }
+        }
+        if (best_word >= 0) out.push_back({s, static_cast<std::uint16_t>(best_word)});
+    }
+    return out;
+}
+
 /// One translation as the model takes it: source and target-prefix tokens, and the options that
 /// must match across a batch.
 struct NllbRequest {
@@ -137,6 +168,11 @@ public:
         } else if (requested != "cpu" && requested != "cuda" && requested != "auto") {
             throw ConfigError("translate device must be cpu, cuda or auto");
         }
+        // stream: off | on | auto. A streaming final pass decodes greedily and hands its first
+        // words over early (TranslationRequest::stop_after_words). auto: on the CPU, where the
+        // final pass is slow enough to matter. Not with batches across sessions.
+        const std::string stream = params.str("stream", "off");
+        if (stream != "auto" && stream != "on" && stream != "off") throw ConfigError("translate stream must be auto, on or off");
         const ctranslate2::Device device = gpu_visible ? ctranslate2::Device::CUDA : ctranslate2::Device::CPU;
         const std::string compute_type =
             gpu_visible ? params.str("gpu_compute_type", "int8_float16") : params.str("compute_type", "int8");
@@ -149,6 +185,7 @@ public:
         const bool batching = replicas > 1 && (batch == "on" || (batch == "auto" && gpu_visible));
         const std::size_t max_batch = batching ? std::max<std::size_t>(replicas, 2) : 1;
         const std::size_t replica_count = batching ? 1 : replicas;
+        streams_ = !batching && (stream == "on" || (stream == "auto" && !gpu_visible));
         static SharedCache<NllbModel> models;
         const std::string key = std::filesystem::weakly_canonical(model_dir).string() + '|' + spm + '|' +
                                 (gpu_visible ? "cuda" + std::to_string(gpu) : std::string("cpu")) + '|' + compute_type +
@@ -192,7 +229,48 @@ public:
             prefix.insert(prefix.end(), kept.begin(), kept.end());
         }
 
+        TranslationResult out;
         const bool want_attention = r.want_alignment && !source.emphasis.empty();
+        if (r.stop_after_words > 0 && streams_) {
+            // Greedy, a token at a time: once the word after the ones wanted begins, they are
+            // complete, and decoding stops there. The callback runs on CTranslate2's worker,
+            // which this thread waits for. It sees every position, the prefix's included.
+            std::vector<std::string> target(prefix.begin() + 1, prefix.end());
+            std::size_t started = 0;
+            ctranslate2::TranslationOptions options;
+            options.beam_size = 1;
+            options.max_decoding_length = 256;
+            options.return_attention = want_attention;  // a stopped decode keeps it for what it produced
+            options.callback = [&](ctranslate2::GenerationStepResult step) {
+                if (step.step < prefix.size()) return false;  // the forced prefix (and language) is reported too
+                if (step.token == "</s>") return true;
+                if (step.token.rfind("\xE2\x96\x81", 0) == 0 && ++started > r.stop_after_words) {
+                    out.partial = true;
+                    return true;
+                }
+                target.push_back(std::move(step.token));
+                return false;
+            };
+            const auto result = model_->translator->translate_batch({tokens}, {prefix}, options);
+            if (out.partial) {
+                sp.Decode(target, &out.text);
+                if (want_attention && !result.at(0).attention.empty()) {
+                    std::vector<std::string> hyp{prefix.front()};
+                    hyp.insert(hyp.end(), target.begin(), target.end());
+                    out.alignment = align_emphasis(result.at(0).attention[0], tokens, 1 + control_pieces.size(), hyp, source.emphasis);
+                }
+                return out;
+            }
+            const std::vector<std::string>& hyp = result.at(0).hypotheses.at(0);  // ended first: all of it
+            std::vector<std::string> all(hyp.begin() + (hyp.empty() ? 0 : 1), hyp.end());
+            std::erase(all, std::string("</s>"));
+            sp.Decode(all, &out.text);
+            if (want_attention && !result.at(0).attention.empty()) {
+                out.alignment = align_emphasis(result.at(0).attention[0], tokens, 1 + control_pieces.size(), hyp, source.emphasis);
+            }
+            return out;
+        }
+
         NllbRequest request{tokens, prefix, beam_, want_attention};
         ctranslate2::TranslationResult result;
         if (model_->batcher) {  // with whatever other sessions are translating
@@ -202,46 +280,27 @@ public:
             result = std::move(run_batch(*model_->translator, one).at(0));
         }
 
-        TranslationResult out;
         const std::vector<std::string>& hyp = result.hypotheses.at(0);
         std::vector<std::string> target(hyp.begin() + (hyp.empty() ? 0 : 1), hyp.end());  // drop the language token
         std::erase(target, std::string("</s>"));
         sp.Decode(target, &out.text);
 
         if (want_attention && !result.attention.empty()) {
-            // attention[t][s]: weight of source token s for hypothesis token t (row 0 = language token).
-            const auto& attention = result.attention[0];
-            const std::vector<int> src_word = piece_words(tokens, 1 + control_pieces.size());  // skip lang + prefix
-            const std::vector<int> tgt_word = piece_words(hyp, 1);
-            for (std::uint16_t s : source.emphasis) {
-                int best_word = -1;
-                float best = 0.0f;
-                std::vector<float> per_word(hyp.size(), 0.0f);
-                for (std::size_t t = 0; t < attention.size() && t < hyp.size(); ++t) {
-                    if (tgt_word[t] < 0) continue;
-                    for (std::size_t k = 0; k < attention[t].size() && k < src_word.size(); ++k) {
-                        if (src_word[k] == static_cast<int>(s)) per_word[static_cast<std::size_t>(tgt_word[t])] += attention[t][k];
-                    }
-                }
-                for (std::size_t w = 0; w < per_word.size(); ++w) {
-                    if (per_word[w] > best) {
-                        best = per_word[w];
-                        best_word = static_cast<int>(w);
-                    }
-                }
-                if (best_word >= 0) out.alignment.push_back({s, static_cast<std::uint16_t>(best_word)});
-            }
+            out.alignment = align_emphasis(result.attention[0], tokens, 1 + control_pieces.size(), hyp, source.emphasis);
         }
         return out;
     }
 
     bool understands_control_tokens() const noexcept override { return control_tokens_; }
     bool preserves_markup() const noexcept override { return false; }
+    bool reads_markup() const noexcept override { return true; }  // emphasis aligned by attention
+    bool streams() const noexcept override { return streams_; }
 
 private:
     std::shared_ptr<NllbModel> model_;  ///< shared with every session on the same model
     std::size_t beam_;
     bool control_tokens_;
+    bool streams_ = false;
 };
 
 }  // namespace

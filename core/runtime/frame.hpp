@@ -50,6 +50,9 @@ inline constexpr std::uint32_t kCalibration = 1u << 6;  ///< neutral reference r
 /// Utterance audio in which the VAD heard no speech: the endpoint hangover may have begun.
 /// Stages can start their final pass early and keep it if no speech follows (speculate_ms).
 inline constexpr std::uint32_t kQuiet = 1u << 7;
+/// Translation, Speech: the first words of an utterance's final translation, sent ahead while
+/// the rest is decoded (translate `stream`). The final frame that follows starts with them.
+inline constexpr std::uint32_t kLeading = 1u << 8;
 }  // namespace frame_flags
 
 /// The unit of data exchanged between stages (blueprint p.4: `IStage::process(Frame&)`).
@@ -76,6 +79,7 @@ struct Frame {
     std::string detail;                    ///< Translation: the exact MT input (control tokens + markup)
     std::vector<Word> words;               ///< Transcript, Utterance: word timings
     std::uint32_t stable_words = 0;        ///< Transcript: words committed by LocalAgreement
+    std::uint32_t expected_words = 0;      ///< Translation, Speech (kLeading): words expected in all, for pacing
     std::vector<std::uint16_t> emphasis;   ///< indices of emphasized words
     EmotionState emotion;                  ///< the source emotion, carried down to 5.2
     std::vector<float> envelope;           ///< Emotion: energy envelope (dB) every envelope_hop s

@@ -194,15 +194,39 @@ PipelineSpec parse_pipeline(std::string_view yaml_text, const std::filesystem::p
     return spec;
 }
 
-PipelineSpec load_pipeline(const std::filesystem::path& yaml_path) {
+namespace {
+
+PipelineSpec load_pipeline(const std::filesystem::path& yaml_path, int depth) {
     std::ifstream in(yaml_path, std::ios::binary);
     if (!in) throw ConfigError("cannot open pipeline config '" + yaml_path.string() + "'");
     std::ostringstream text;
     text << in.rdbuf();
     auto dir = yaml_path.parent_path();
     if (dir.empty()) dir = ".";
-    return parse_pipeline(text.str(), dir);
+    YAML::Node root;
+    try {
+        root = YAML::Load(text.str());
+    } catch (const YAML::Exception& e) {
+        throw ConfigError(std::string("pipeline YAML: ") + e.what());
+    }
+    if (!root.IsMap() || !root["base"]) return parse_pipeline(text.str(), dir);
+
+    // A profile: another config (`base`, relative to this file) with settings changed, each
+    // `set` entry as --set KEY=VALUE would.
+    if (depth >= 4) throw ConfigError("pipeline config '" + yaml_path.string() + "': too many nested 'base' configs");
+    const std::string base_dir = dir.generic_string();
+    PipelineSpec spec = load_pipeline(dir / scalar(root["base"], "base", base_dir), depth + 1);
+    if (const auto set = root["set"]) {
+        if (!set.IsMap()) throw ConfigError("pipeline config '" + yaml_path.string() + "': 'set' must map keys to values");
+        for (const auto& kv : set) apply_override(spec, kv.first.as<std::string>(), scalar(kv.second, "set", base_dir));
+    }
+    validate(spec);
+    return spec;
 }
+
+}  // namespace
+
+PipelineSpec load_pipeline(const std::filesystem::path& yaml_path) { return load_pipeline(yaml_path, 0); }
 
 void apply_override(PipelineSpec& spec, std::string_view key, std::string_view value) {
     const auto dot = key.find('.');

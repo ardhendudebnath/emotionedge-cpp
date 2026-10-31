@@ -38,6 +38,7 @@ void Frame::reset(FrameKind k) noexcept {
     detail.clear();
     words.clear();
     stable_words = 0;
+    expected_words = 0;
     emphasis.clear();
     emotion = {};
     envelope.clear();

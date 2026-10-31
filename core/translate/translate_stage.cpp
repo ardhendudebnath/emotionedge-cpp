@@ -1,5 +1,7 @@
 #include "core/translate/translate_stage.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 #include "core/runtime/log.hpp"
@@ -14,8 +16,10 @@ std::unique_ptr<ITranslator> make_translator(const Params& params, const ModelRe
     const std::string kind = params.str("engine", "phrasebook");
     if (kind == "phrasebook") {
         const std::string path = params.str("phrasebook");
-        if (path.empty()) return std::make_unique<PhrasebookTranslator>();  // pseudo-translations only
-        return std::make_unique<PhrasebookTranslator>(PhrasebookTranslator::load(path));
+        // pseudo-translations only without a phrasebook
+        auto book = std::make_unique<PhrasebookTranslator>(path.empty() ? PhrasebookTranslator() : PhrasebookTranslator::load(path));
+        book->set_streaming(params.str("stream", "off") == "on");
+        return book;
     }
     if (kind == "ct2") {
 #if defined(EE_HAVE_CTRANSLATE2)
@@ -55,10 +59,14 @@ void TranslateStage::open(StageContext& ctx) {
     }
     token_mode_ = tokens == "on" ? TokenMode::On : tokens == "off" ? TokenMode::Off : TokenMode::Auto;
     drafts_ = p.flag("drafts", true);
-    wait_k_ = WaitKPolicy(static_cast<int>(p.integer("wait_k", 3)),
-                          p.real("length_ratio", profiles_.get(target_language_).length_ratio));
+    stream_words_ = static_cast<std::size_t>(std::max<std::int64_t>(0, p.integer("stream_words", 5)));
+    length_ratio_ = p.real("length_ratio", profiles_.get(target_language_).length_ratio);
+    word_ratio_ = length_ratio_;
+    wait_k_ = WaitKPolicy(static_cast<int>(p.integer("wait_k", 3)), length_ratio_);
     glossary_misses_ = &ctx.services().telemetry->metrics().counter(
         "ee_glossary_misses_total", "Glossary placeholders the MT engine dropped");
+    streamed_ = &ctx.services().telemetry->metrics().counter(
+        "ee_translate_leading_total", "Final translations whose leading words were sent ahead (stream)");
 }
 
 void TranslateStage::process(Frame& f) {
@@ -73,7 +81,7 @@ std::string TranslateStage::prepare_input(const std::string& marked, const Contr
                                           const ITranslator& translator, Glossary::Protected& protected_text) const {
     protected_text = glossary_.protect(marked);
     std::string body = protected_text.text;
-    if (!translator.preserves_markup()) body = parse_markup(body, source_language_).plain;
+    if (!translator.reads_markup()) body = parse_markup(body, source_language_).plain;
     const bool use_tokens =
         token_mode_ == TokenMode::On || (token_mode_ == TokenMode::Auto && translator.understands_control_tokens());
     return use_tokens ? format_control_prefix(tokens, arousal_step_) + " " + body : body;
@@ -98,13 +106,42 @@ void TranslateStage::translate_final(const Frame& u) {
     request.target_language = target_language_;
     if (draft_utterance_ == u.utterance) request.target_prefix = committed_;  // "prefix kept"
     request.want_alignment = !u.emphasis.empty();
-    const TranslationResult result = translator->translate(request);
+
+    // Streaming: the leading words go ahead, then the rest is translated after them. An
+    // emphasized word lands on the target word that attends to it most: leading words come
+    // with that alignment from the engine, or are not sent (the committed draft prefix has none).
+    std::optional<TranslationResult> done;
+    if (stream_words_ > 0 && translator->streams()) {
+        // At least one word past a committed draft prefix: the decode aligns the prefix too.
+        const std::size_t kept = request.target_prefix.size();
+        request.stop_after_words = kept < stream_words_ ? stream_words_ - kept : 1;
+        TranslationResult lead = translator->translate(request);
+        request.stop_after_words = 0;
+        if (!lead.partial) {
+            done = std::move(lead);  // no longer than that: it is the whole translation
+            log::debug("translate: utterance ", u.utterance, " in one pass (", kept, " word(s) kept)");
+        } else {
+            request.target_prefix = split_words(remove_control_tokens(lead.text), target_language_);
+            if (u.emphasis.empty() || !lead.alignment.empty()) {
+                emit_leading(u, request.target_prefix,
+                             project_emphasis(u.emphasis, source_words.size(), request.target_prefix.size(), {}, lead.alignment),
+                             input, protected_text, source_words.size());
+                log::debug("translate: utterance ", u.utterance, " sent ", request.target_prefix.size(), " word(s) ahead");
+            } else {
+                log::debug("translate: utterance ", u.utterance, " not sent ahead: emphasis without alignment");
+            }
+        }
+    }
+    const TranslationResult result = done ? std::move(*done) : translator->translate(request);
 
     std::uint32_t missing = 0;
     const std::string restored = glossary_.restore(remove_control_tokens(result.text), protected_text, &missing);
     if (missing > 0) glossary_misses_->inc(missing);
     const Markup target = parse_markup(restored, target_language_);
     const std::size_t target_words = split_words(target.plain, target_language_).size();
+    if (!source_words.empty() && target_words > 0) {  // this speaker's translations so far, for expected_words
+        word_ratio_ = 0.7f * word_ratio_ + 0.3f * static_cast<float>(target_words) / static_cast<float>(source_words.size());
+    }
 
     Frame& out = ctx_->make(FrameKind::Translation);
     out.copy_header_from(u);
@@ -122,6 +159,31 @@ void TranslateStage::translate_final(const Frame& u) {
     draft_utterance_ = 0;
     committed_.clear();
     last_stable_ = 0;
+}
+
+void TranslateStage::emit_leading(const Frame& u, const std::vector<std::string>& words,
+                                  std::vector<std::uint16_t> emphasis, const std::string& input,
+                                  const Glossary::Protected& protected_text, std::size_t source_words) {
+    if (words.empty()) return;
+    const Markup lead = parse_markup(glossary_.restore(join_text(words, target_language_), protected_text), target_language_);
+    Frame& out = ctx_->make(FrameKind::Translation);
+    out.copy_header_from(u);
+    out.flags = frame_flags::kLeading;
+    out.text = lead.plain;
+    out.language = target_language_;
+    out.detail = input;
+    out.emphasis = std::move(emphasis);
+    out.emotion = u.emotion;
+    out.axis_confidence = u.axis_confidence;
+    // How long the whole translation will run, for the TTS's pacing: target words per source
+    // word as the session's translations have run (from the profile's ratio at first), and never
+    // fewer than the words already here plus one. The TTS checks it against the final.
+    const auto expected = static_cast<std::size_t>(std::lround(static_cast<double>(source_words) * word_ratio_));
+    out.expected_words = static_cast<std::uint32_t>(std::max(expected, words.size() + 1));
+    // Speech can start from here: the rest of the final pass is off the critical path.
+    ctx_->services().telemetry->mark(u.utterance, telemetry::Milestone::MtFinal, ctx_->now());
+    ctx_->emit(out);
+    streamed_->inc();
 }
 
 void TranslateStage::translate_draft(const Frame& t) {

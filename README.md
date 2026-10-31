@@ -17,7 +17,8 @@ progress: the models run on a GPU when there is one (see [Real engines](#real-en
 [docs/benchmark.md](docs/benchmark.md) has the current numbers, re-measured with one command. On
 an RTX 5070 Ti laptop GPU, every latency target is met: jfk.wav runs end to end in 340–389 ms p50
 and 438–578 ms p95 (target < 800 ms p95), and three back-to-back sentences in 657–696 ms p95, with
-[catch-up playout](#real-engines). A CPU alone still misses it (1040–1065 ms p95 on jfk.wav).
+[catch-up playout](#real-engines). A CPU alone misses it with Kokoro (1040–1065 ms p95 on
+jfk.wav); the fast CPU profile meets it (737–788 ms) without the emotion out.
 
 ![emotionedge-desktop: captions with the emotion read from the voice, the Hindi translation and its ECS, and the live latency budget](docs/images/desktop.png)
 
@@ -226,6 +227,53 @@ Real time on the GPU, 8 runs each, in 4 interleaved blocks:
   On the CPU, jfk.wav's playout buffer p95 fell from 500–778 to 58–154 ms, and its end to end
   to 1040–1065 ms p95; the sentences are at 1222–1287 ms.
 
+**Fast CPU profile** (`config/pipeline.cpu-fast.yaml`) meets the latency target without a GPU, by
+giving up the emotion out. On the CPU, each stage after the endpoint takes 150–300 ms: ASR
+~260, translation ~230, Kokoro's first clause ~300, run one after another. Kokoro was the place
+to save: its vocoder costs ~300 ms per short clause at 3, 6 or 12 threads alike, and
+normalizes over the whole clause, so it cannot be cut into chunks. The profile replaces it with
+Piper's Hindi voice (~85 ms per short clause) and streams the translation (below). Real time on
+the CPU:
+
+| End to end p95, median (range) | Default (Kokoro), 8 runs | **Fast profile (Piper)**, 5 runs |
+|---|---|---|
+| jfk.wav | 1145 ms (max 1294) | **758 ms (737–788)** |
+| 3 back-to-back sentences | 1256 ms (max 1491) | **680 ms (614–745)** |
+
+What it gives up, on the 48-clip RAVDESS set (CPU, 2 runs each):
+
+| | Kokoro | Piper |
+|---|---|---|
+| Output heard as the input's emotion | 0.39–0.41 | 0.35–0.36 |
+| Output heard as non-neutral | 0.19–0.23 | 0.00–0.02 |
+| Arousal CCC, input vs output | 0.08–0.13 | 0.00–0.01 |
+| ECS (lenient: a neutral output scores well) | 0.82–0.83 | 0.82–0.83 |
+
+Piper takes the controller's rate, loudness and pauses, but not pitch, range or contour, nor
+Kokoro's style offsets and learned plan, and it has one voice. The emotion in, the translation
+and the captions are unchanged. A profile is a config's `base` plus `set` overrides, each as
+`--set` would apply it.
+
+**Streaming final pass** (`translate.stream`, on in the fast profile): NLLB decodes the first
+five words greedily and sends them ahead (`kLeading`). The controller plans them, from T6 while
+T4 decodes the rest, and the TTS speaks their first clause. The rest is translated with them as
+its prefix, and the final adds only the words after that clause. If the final arrives first, the
+early words are dropped and nothing changes. Emphasized words keep their place: the stopped
+decode returns NLLB's attention for the words it has.
+- **Quality:** FLORES-200 chrF 56.72 → 56.55 on the CPU (`eval_mt.py --stream-words 5`). Now and
+  then the greedy start reads worse: "मैं तुम्हें ऐसा करने के लिए विश्वास नहीं कर सकता" became
+  "मैं तुम्हें यह किया विश्वास नहीं कर सकता".
+- **In the fast profile** it saves 60–125 ms (6 runs each, interleaved): jfk.wav p95 948 → 891
+  ms, the sentences 964 → 839 ms. That session ran on battery, at ~25% more CPU time for the
+  same work than the profile's figures above, measured on mains power.
+- **Off by default.** With Kokoro on the CPU it saved little and cost more (8 runs each):
+  jfk.wav p95 1145 → 1093 ms, but back-to-back sentences 1256 → 1589 ms. The first clause
+  waits while Kokoro still renders the previous sentence, and is paced before the whole length
+  is known. Piper renders in ~60 ms, so neither happens there.
+- **Emphasis by attention:** the translate stage had stripped `<em>` before NLLB, so emphasis
+  fell back to word position, often wrong across English and Hindi word order. NLLB now places
+  it by attention, as the adapter was built to; RAVDESS transfer is unchanged.
+
 **Speaker-aware barge-in** (phase 4) lets a listener interrupt the translation, while the
 interpreted speaker can talk on over it. When speech starts while the translation plays, the
 speaker stage embeds its first 1.5 s with ECAPA-TDNN and judges it with a `VoiceGate`:
@@ -428,7 +476,9 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
      991 → 582 ms end to end p50, one client unchanged;
    - catch-up playout: while newer speech waits, the queued translation plays up to 1.3× faster
      (WSOLA). Three back-to-back sentences on the GPU: 1677 → 688 ms end to end p95, the last
-     latency target met.
+     latency target met;
+   - a fast CPU profile (Piper, streamed translation) that meets the latency target without a
+     GPU, giving up the emotion out: jfk.wav 758 ms end to end p95 on the CPU.
 
    Next: Android and Jetson builds.
 

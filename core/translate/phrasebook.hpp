@@ -34,12 +34,16 @@ public:
     [[nodiscard]] TranslationResult translate(const TranslationRequest& request) override;
     [[nodiscard]] bool understands_control_tokens() const noexcept override { return true; }
     [[nodiscard]] bool preserves_markup() const noexcept override { return true; }
+    [[nodiscard]] bool streams() const noexcept override { return streams_; }
+    /// Honour stop_after_words (`stream: on`), to exercise streaming without a model.
+    void set_streaming(bool on) noexcept { streams_ = on; }
 
     /// Lowercase, apostrophes unified, whitespace collapsed.
     [[nodiscard]] static std::string normalize(std::string_view text);
 
 private:
     std::map<std::string, Entry, std::less<>> entries_;  // key: "<src>-<tgt>|<normalized source>"
+    bool streams_ = false;
 };
 
 }  // namespace ee

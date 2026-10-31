@@ -39,23 +39,33 @@ void EmotionControllerStage::process(Frame& f) {
         if (controller_.feedback(f.score, f.delta, f.axis_confidence)) corrections_->inc();
         return;
     }
-    if (f.kind != FrameKind::Translation || !f.is_final() || f.text.empty()) return;
+    const bool leading = f.has(frame_flags::kLeading);
+    if (f.kind != FrameKind::Translation || (!leading && !f.is_final()) || f.text.empty()) return;
 
-    controller_.next_utterance();
-    const Vad target = controller_.target(f.emotion.vad);
-    const ExpressivityProfile profile = profiles_.get(f.language);
+    // One plan per utterance: the final after its leading words keeps theirs (and the closed
+    // loop moves on once).
+    if (planned_utterance_ != f.utterance) {
+        controller_.next_utterance();
+        const Vad target = controller_.target(f.emotion.vad);
+        const ExpressivityProfile profile = profiles_.get(f.language);
+        plan_.prosody = controller_.plan(target, f.emotion.confidence, profile);
+        plan_.style = styles_.blend(target, style_temperature_);
+        plan_.delta = target - f.emotion.vad;  // the correction in effect, for the session log
+    }
+    planned_utterance_ = leading ? f.utterance : 0;
 
     Frame& out = ctx_->make(FrameKind::Speech);
     out.copy_header_from(f);
-    out.flags = frame_flags::kFinal;
+    out.flags = leading ? frame_flags::kLeading : frame_flags::kFinal;
     out.text = f.text;
     out.language = f.language;
     out.emphasis = f.emphasis;
     out.emotion = f.emotion;  // the source emotion, for the consistency check
     out.axis_confidence = f.axis_confidence;
-    out.prosody = controller_.plan(target, f.emotion.confidence, profile);
-    out.style = styles_.blend(target, style_temperature_);
-    out.delta = target - f.emotion.vad;  // the correction in effect, for the session log
+    out.expected_words = f.expected_words;
+    out.prosody = plan_.prosody;
+    out.style = plan_.style;
+    out.delta = plan_.delta;
     ctx_->services().telemetry->mark(f.utterance, telemetry::Milestone::ControllerDone, ctx_->now());
     ctx_->emit(out);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -29,6 +30,13 @@ struct Clause {
 [[nodiscard]] std::vector<Clause> chunk_clauses(std::string_view text, std::string_view language,
                                                 const std::vector<std::uint16_t>& emphasis,
                                                 const ChunkerConfig& config = {});
+
+/// The first clause chunk_clauses would cut from any text that starts with `prefix` (and goes on
+/// past it), when the prefix already settles where it ends, with at least one more word after
+/// it; nullopt when more words are needed to tell.
+[[nodiscard]] std::optional<Clause> leading_clause(std::string_view prefix, std::string_view language,
+                                                   const std::vector<std::uint16_t>& emphasis,
+                                                   const ChunkerConfig& config = {});
 
 /// True if the word ends with clause-ending punctuation.
 [[nodiscard]] bool ends_clause(std::string_view word) noexcept;

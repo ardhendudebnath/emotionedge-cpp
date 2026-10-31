@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """P5 MT evaluation of CTranslate2 NLLB models, fed the way core/translate/ct2_translator.cpp feeds
-them: the control prefix encoded as its own SentencePiece pieces before the text, beam 2.
+them: the control prefix encoded as its own SentencePiece pieces before the text, beam 2 (--beam),
+and with --stream-words as the CPU's streaming final pass (the first words greedily).
 
     python ml/eval/eval_mt.py --model ~/ee-models/mt/nllb-200-distilled-600M-int8 --name vanilla \\
         --flores data/flores200_dataset --corpus data/mt_corpus.hi.jsonl --prefix none \\
@@ -35,7 +36,8 @@ CLASSIFIER = "j-hartmann/emotion-english-distilroberta-base"
 
 
 class Ct2Nllb:
-    def __init__(self, model_dir: Path, beam: int = 2, device: str = "auto", compute_type: str = "auto") -> None:
+    def __init__(self, model_dir: Path, beam: int = 2, device: str = "auto", compute_type: str = "auto",
+                 stream_words: int = 0) -> None:
         import ctranslate2  # type: ignore
         import sentencepiece as spm  # type: ignore
 
@@ -47,13 +49,29 @@ class Ct2Nllb:
         self.translator = ctranslate2.Translator(str(model_dir), device=device, compute_type=compute_type)
         self.sp = spm.SentencePieceProcessor(model_file=str(model_dir / "sentencepiece.bpe.model"))
         self.beam = beam
+        self.stream_words = stream_words
 
     def translate(self, sources, prefixes, src="eng_Latn", tgt="hin_Deva", batch=32):
         tokens = [[src] + (self.sp.encode(p, out_type=str) if p else []) + self.sp.encode(s, out_type=str) + ["</s>"]
                   for s, p in zip(sources, prefixes)]
-        results = self.translator.translate_batch(tokens, target_prefix=[[tgt]] * len(tokens), beam_size=self.beam,
-                                                  max_batch_size=batch, max_decoding_length=256)
-        return [self.sp.decode(r.hypotheses[0][1:]) for r in results]
+        if not self.stream_words:
+            results = self.translator.translate_batch(tokens, target_prefix=[[tgt]] * len(tokens), beam_size=self.beam,
+                                                      max_batch_size=batch, max_decoding_length=256)
+            return [self.sp.decode(r.hypotheses[0][1:]) for r in results]
+        # The runtime's streaming final pass (translate stream_words): the first words greedily,
+        # then the rest at the configured beam, re-encoded as its target prefix.
+        greedy = self.translator.translate_batch(tokens, target_prefix=[[tgt]] * len(tokens), beam_size=1,
+                                                 max_batch_size=batch, max_decoding_length=256)
+        out = [self.sp.decode(r.hypotheses[0][1:]) for r in greedy]
+        rest = [i for i, text in enumerate(out) if len(text.split()) > self.stream_words]
+        heads = [" ".join(out[i].split()[:self.stream_words]) for i in rest]
+        if rest:
+            finished = self.translator.translate_batch([tokens[i] for i in rest],
+                                                       target_prefix=[[tgt] + self.sp.encode(h, out_type=str) for h in heads],
+                                                       beam_size=self.beam, max_batch_size=batch, max_decoding_length=256)
+            for i, r in zip(rest, finished):
+                out[i] = self.sp.decode(r.hypotheses[0][1:])
+        return out
 
 
 def leaks(text: str) -> bool:
@@ -72,10 +90,14 @@ def main() -> int:
     parser.add_argument("--backtranslate", type=Path, help="CT2 NLLB model for hin->eng round trips")
     parser.add_argument("--device", default="auto", help="cpu | cuda | auto (cuda when available)")
     parser.add_argument("--compute-type", default="auto", help="auto: int8 on cpu, int8_float16 on cuda")
+    parser.add_argument("--beam", type=int, default=2, help="beam size (translate.beam)")
+    parser.add_argument("--stream-words", type=int, default=0,
+                        help="as the runtime's streaming final pass: this many words greedily first (translate.stream_words)")
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
 
-    mt = Ct2Nllb(args.model, device=args.device, compute_type=args.compute_type)
+    mt = Ct2Nllb(args.model, beam=args.beam, device=args.device, compute_type=args.compute_type,
+                 stream_words=args.stream_words)
     metrics = {}
     suffix = f"_{args.name}"
     if args.flores:

@@ -74,6 +74,21 @@ PhrasebookTranslator PhrasebookTranslator::load(const std::filesystem::path& pat
 }
 
 TranslationResult PhrasebookTranslator::translate(const TranslationRequest& request) {
+    if (request.stop_after_words > 0 && streams_) {
+        // As a streaming engine would: the first words of the whole, if there are more.
+        TranslationRequest whole = request;
+        whole.stop_after_words = 0;
+        TranslationResult out = translate(whole);
+        const std::vector<std::string> words = split_words(out.text, request.target_language);
+        const std::size_t keep = request.target_prefix.size() + request.stop_after_words;
+        if (words.size() > keep) {
+            out.text = join_text(std::vector<std::string>(words.begin(), words.begin() + static_cast<std::ptrdiff_t>(keep)),
+                                 request.target_language);
+            out.alignment.clear();
+            out.partial = true;
+        }
+        return out;
+    }
     const Markup source = parse_markup(strip_control_prefix(request.source), request.source_language);
     TranslationResult out;
     const auto it = entries_.find(key(request.source_language, request.target_language, normalize(source.plain)));

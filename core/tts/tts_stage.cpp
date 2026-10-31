@@ -1,10 +1,12 @@
 #include "core/tts/tts_stage.hpp"
 
 #include <algorithm>
+#include <optional>
 
 #include "core/audio/audio_io.hpp"
 #include "core/runtime/log.hpp"
 #include "core/telemetry/telemetry.hpp"
+#include "core/translate/languages.hpp"
 #include "core/tts/formant_synth.hpp"
 
 namespace ee {
@@ -85,6 +87,8 @@ void TtsStage::open(StageContext& ctx) {
     }
     pace_metric_ = &ctx.services().telemetry->metrics().histogram(
         "ee_tts_pacing_speed", "Speaking-rate multiplier from adaptive pacing, per utterance", {}, 1e-4);
+    leading_metric_ = &ctx.services().telemetry->metrics().counter(
+        "ee_tts_leading_clauses_total", "First clauses spoken from a translation's leading words, ahead of the rest");
 
     if (p.flag("calibration", true)) {
         // Neutral reference render of this voice, for 5.2's baseline. Playback ignores it.
@@ -119,34 +123,61 @@ void TtsStage::process(Frame& f) {
     case FrameKind::Control:
         if (f.has(frame_flags::kBargeIn)) {
             std::erase_if(pending_, [&](const Job& j) { return j.speech.utterance < f.utterance; });
+            if (lead_.utterance < f.utterance) lead_ = {};
         }
         return;
     case FrameKind::Speech: {
-        const std::vector<Clause> clauses = chunk_clauses(f.text, f.language, f.emphasis, chunker_);
-        // Decided before this utterance's own audio enters the queue: later in the utterance,
-        // its earlier clauses would read as backlog.
+        std::vector<Clause> clauses;
+        std::uint32_t first_index = 0;
         float pace = 1.0f;
-        if (pacing_.max_speed > 1.0f) {
-            // The gap before this utterance updates the expectation for the one after it
-            // (clamped: one long pause should not switch pacing off for good).
-            if (last_src_end_ >= 0.0 && f.src_start >= last_src_end_) {
-                gap_s_ = 0.5 * gap_s_ + 0.5 * std::min(f.src_start - last_src_end_, 5.0);
+        const bool leading = f.has(frame_flags::kLeading);
+        if (leading) {
+            // Only once the words settle the first clause; otherwise the final will do.
+            std::optional<Clause> first = leading_clause(f.text, f.language, f.emphasis, chunker_);
+            if (!first) return;
+            double behind = 0.0;
+            pace = pace_for(f, &behind);
+            lead_ = {f.utterance, first->text, first->words, pace, behind};
+            clauses.push_back(std::move(*first));
+            leading_metric_->inc();
+        } else if (lead_.utterance == f.utterance) {
+            // The rest after the clause spoken ahead, chunked as later clauses are.
+            const std::vector<std::string> words = split_words(f.text, f.language);
+            const std::size_t skip = std::min(lead_.words, words.size());
+            const std::vector<std::string> head(words.begin(), words.begin() + static_cast<std::ptrdiff_t>(skip));
+            if (join_text(head, f.language) != lead_.text) {
+                log::warn("tts: utterance ", f.utterance, "'s translation does not start with the clause spoken ahead");
             }
-            last_src_end_ = std::max(last_src_end_, f.src_end);
-            const double behind = backlog_s(f);
-            const double source = f.src_end - f.src_start;
-            const double predicted = seconds_per_char_ * static_cast<double>(characters(f.text)) / engine_speed(f.prosody, 1.0f);
-            pace = pacing_.speed(behind, predicted, source, gap_s_);
-            pace_metric_->record(static_cast<std::uint64_t>(pace * 1e4f + 0.5f));
-            log::debug("tts: utterance ", f.utterance, " would wait ", behind, " s and last ~", predicted, " s for ",
-                       source, " s of source + ~", gap_s_, " s gap: speaking x", pace);
+            std::vector<std::uint16_t> emphasis;
+            for (std::uint16_t e : f.emphasis) {
+                if (e >= skip) emphasis.push_back(static_cast<std::uint16_t>(e - skip));
+            }
+            ChunkerConfig rest = chunker_;
+            rest.min_first_chars = rest.min_chars;
+            rest.max_first_words = 0;
+            const std::vector<std::string> tail(words.begin() + static_cast<std::ptrdiff_t>(skip), words.end());
+            clauses = chunk_clauses(join_text(tail, f.language), f.language, emphasis, rest);
+            for (Clause& c : clauses) c.first_word += skip;
+            first_index = 1;
+            // The whole length is known now: if it asks for more speed than the guess from the
+            // leading words did, the rest gets it (never less, so the rate only rises).
+            pace = lead_.pace;
+            if (pacing_.max_speed > 1.0f) {
+                const double predicted =
+                    seconds_per_char_ * static_cast<double>(characters(f.text)) / engine_speed(f.prosody, 1.0f);
+                pace = std::max(pace, pacing_.speed(lead_.behind, predicted, f.src_end - f.src_start, gap_s_));
+            }
+            lead_ = {};
+        } else {
+            clauses = chunk_clauses(f.text, f.language, f.emphasis, chunker_);
+            pace = pace_for(f);
         }
         for (std::size_t i = 0; i < clauses.size(); ++i) {
             Job& job = pending_.emplace_back();
             job.speech = f;
             job.clause = clauses[i];
-            job.index = static_cast<std::uint32_t>(i);
-            job.last = i + 1 == clauses.size();
+            job.index = first_index + static_cast<std::uint32_t>(i);
+            job.last = !leading && i + 1 == clauses.size();
             job.pace = pace;
         }
         // First clause right away: first audio before the sentence ends.
@@ -170,6 +201,31 @@ void TtsStage::tick() {
 
 void TtsStage::close() {
     while (!pending_.empty()) tick();
+}
+
+float TtsStage::pace_for(const Frame& f, double* behind_out) {
+    // Decided before this utterance's own audio enters the queue: later in the utterance, its
+    // earlier clauses would read as backlog.
+    if (pacing_.max_speed <= 1.0f) return 1.0f;
+    // The gap before this utterance updates the expectation for the one after it (clamped: one
+    // long pause should not switch pacing off for good).
+    if (last_src_end_ >= 0.0 && f.src_start >= last_src_end_) {
+        gap_s_ = 0.5 * gap_s_ + 0.5 * std::min(f.src_start - last_src_end_, 5.0);
+    }
+    last_src_end_ = std::max(last_src_end_, f.src_end);
+    const double behind = backlog_s(f);
+    if (behind_out != nullptr) *behind_out = behind;
+    const double source = f.src_end - f.src_start;
+    double predicted = seconds_per_char_ * static_cast<double>(characters(f.text)) / engine_speed(f.prosody, 1.0f);
+    if (f.has(frame_flags::kLeading) && f.expected_words > 0) {  // leading words: as long as the whole will be
+        const std::size_t words = split_words(f.text, f.language).size();
+        if (words > 0) predicted *= static_cast<double>(f.expected_words) / static_cast<double>(words);
+    }
+    const float pace = pacing_.speed(behind, predicted, source, gap_s_);
+    pace_metric_->record(static_cast<std::uint64_t>(pace * 1e4f + 0.5f));
+    log::debug("tts: utterance ", f.utterance, " would wait ", behind, " s and last ~", predicted, " s for ", source,
+               " s of source + ~", gap_s_, " s gap: speaking x", pace);
+    return pace;
 }
 
 double TtsStage::backlog_s(const Frame& speech) const {
