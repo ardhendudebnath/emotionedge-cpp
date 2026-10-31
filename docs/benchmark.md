@@ -1,6 +1,6 @@
 # EmotionEdge benchmark
 
-Measured 2026-10-30 19:16 UTC at commit `8621e676b51d`, translating English into Hindi with `config/pipeline.engines.yaml`. Ranges are the lowest and highest of 5 runs; where a median is given, it comes first. Every run is in `benchmark.json` next to this file. Regenerate both with `ml/eval/benchmark.py` (its docstring has the commands).
+Measured 2026-10-31 06:21 UTC at commit `ac3feb3d3d7f`, translating English into Hindi with `config/pipeline.engines.yaml`. Ranges are the lowest and highest of 5 runs; where a median is given, it comes first. Every run is in `benchmark.json` next to this file. Regenerate both with `ml/eval/benchmark.py` (its docstring has the commands).
 
 | Machine | |
 |---|---|
@@ -13,9 +13,9 @@ Measured 2026-10-30 19:16 UTC at commit `8621e676b51d`, translating English into
 
 | Target | Goal | cpu | auto |
 |---|---|---|---|
-| End to end p95, jfk.wav (real time) | < 800 ms | 1622 (1608–1720) ms, **missed** | 607 (590–641) ms, met |
-| End to end p95, 3 back-to-back sentences (real time) | < 800 ms | 1688 (1649–1949) ms, **missed** | 940 (926–975) ms, **missed** |
-| ASR real-time factor p95, jfk.wav | < 0.3 | 0.493–0.698, **missed** | 0.076–0.092, met |
+| End to end p95, jfk.wav (real time) | < 800 ms | 1065 (1040–1065) ms, **missed** | 496 (438–578) ms, met |
+| End to end p95, 3 back-to-back sentences (real time) | < 800 ms | 1229 (1222–1287) ms, **missed** | 677 (657–696) ms, met |
+| ASR real-time factor p95, jfk.wav | < 0.3 | 0.505–0.531, **missed** | 0.109–0.126, met |
 | Peak RAM, real-time runs | < 3 GB | 2.2 GB, met | 1.9–2.0 GB, met |
 | Audio dropouts, real-time runs | 0 | 0 samples, met | 0 samples, met |
 | Emotion consistency (ECS), RAVDESS | ≥ 0.75 | – | 0.822–0.827, met |
@@ -24,35 +24,35 @@ Measured 2026-10-30 19:16 UTC at commit `8621e676b51d`, translating English into
 
 | Row | Budget | cpu p50 | cpu p95 | auto p50 | auto p95 |
 |---|---|---|---|---|---|
-| VAD endpoint hangover | 160 ms | 166 | 172 | 166 | 172 |
-| Emotion fusion | 40 ms | 95–114 | 154–170 | 20–28 | 54–79 |
-| ASR final decode | 220 ms | 274–307 | 373–493 | 0–1 | 68–154 |
-| Emotion state | 10 ms | 0–1 | 4–6 | 0–1 | 4–5 |
-| Translation, final pass | 120 ms | 252–283 | 369–410 | 63–69 | 83–125 |
+| VAD endpoint hangover | 160 ms | 166 | 172–173 | 166 | 172 |
+| Emotion fusion | 40 ms | 87–166 | 158–207 | 27–35 | 59–115 |
+| ASR final decode | 220 ms | 260–283 | 337–348 | 4–32 | 103–248 |
+| Emotion state | 10 ms | 1–5 | 4–25 | 1–5 | 5–17 |
+| Translation, final pass | 120 ms | 207–211 | 274–288 | 75–93 | 99–128 |
 | Emotion controller | 5 ms | 0 | 0 | 0 | 0 |
-| TTS first chunk | 160 ms | 307–373 | 389–471 | 55–65 | 93–128 |
-| Playout buffer | 60 ms | 0 | 500–778 | 0–1 | 296–346 |
-| **End to end** | 800 ms (p95) | **1130–1229** | **1608–1720** | **340–389** | **590–641** |
+| TTS first chunk | 160 ms | 274–315 | 345–389 | 63–67 | 99–112 |
+| Playout buffer | 60 ms | 0–3 | 58–154 | 0–3 | 0–7 |
+| **End to end** | 800 ms (p95) | **958–1008** | **1040–1065** | **340–389** | **438–578** |
 
-- **cpu:** CPU time 4.5–4.8 s per second of audio (model loading included), GPU memory 0 MB, ASR WER 0.000. At the start of the runs: load average 1.6–3.1, GPU at 57–58 °C
-- **auto:** CPU time 0.6–0.7 s per second of audio (model loading included), GPU memory 2953–3479 MB, ASR WER 0.000. At the start of the runs: load average 1.4–2.7, GPU at 57–59 °C
+- **cpu:** CPU time 4.5–4.7 s per second of audio (model loading included), GPU memory 0 MB, ASR WER 0.000. At the start of the runs: load average 1.1–2.0, GPU at 53–57 °C
+- **auto:** CPU time 0.7–0.8 s per second of audio (model loading included), GPU memory 2950–3480 MB, ASR WER 0.000. At the start of the runs: load average 0.8–1.7, GPU at 55–56 °C
 
-## Latency, real time: 3 back-to-back sentences: 10 s, Piper's voice
+## Latency, real time: 3 back-to-back sentences: 10 s, Piper's voice without its noise
 
 | Row | Budget | cpu p50 | cpu p95 | auto p50 | auto p95 |
 |---|---|---|---|---|---|
-| VAD endpoint hangover | 160 ms | 182 | 190 | 182 | 190 |
-| Emotion fusion | 40 ms | 75–112 | 97–211 | 9–13 | 20–28 |
-| ASR final decode | 220 ms | 162–315 | 180–365 | 0–8 | 14–20 |
-| Emotion state | 10 ms | 1–21 | 5–52 | 4–5 | 7–14 |
-| Translation, final pass | 120 ms | 291–332 | 364–529 | 69–85 | 99–111 |
+| VAD endpoint hangover | 160 ms | 178 | 178 | 178 | 178 |
+| Emotion fusion | 40 ms | 154–174 | 186–206 | 4–32 | 27–51 |
+| ASR final decode | 220 ms | 174–373 | 222–380 | 12–28 | 23–33 |
+| Emotion state | 10 ms | 1–56 | 1–75 | 0–12 | 0–15 |
+| Translation, final pass | 120 ms | 244–260 | 315–324 | 81–110 | 105–121 |
 | Emotion controller | 5 ms | 0 | 0 | 0 | 0 |
-| TTS first chunk | 160 ms | 332–381 | 379–410 | 60–85 | 91–113 |
-| Playout buffer | 60 ms | 0 | 598–893 | 63–93 | 559–628 |
-| **End to end** | 800 ms (p95) | **1130–1458** | **1649–1949** | **422–471** | **926–975** |
+| TTS first chunk | 160 ms | 324–340 | 324–404 | 64–67 | 95–109 |
+| Playout buffer | 60 ms | 0–5 | 299–386 | 0–5 | 296–332 |
+| **End to end** | 800 ms (p95) | **1098–1196** | **1222–1287** | **389–422** | **657–696** |
 
-- **cpu:** CPU time 4.3–4.7 s per second of audio (model loading included), GPU memory 0 MB, ASR WER 0.000. At the start of the runs: load average 2.4–3.1, GPU at 57–59 °C
-- **auto:** CPU time 0.6 s per second of audio (model loading included), GPU memory 2951–3479 MB, ASR WER 0.000. At the start of the runs: load average 0.8–1.3, GPU at 59 °C
+- **cpu:** CPU time 4.3–4.5 s per second of audio (model loading included), GPU memory 0 MB, ASR WER 0.000. At the start of the runs: load average 1.9–2.5, GPU at 57–58 °C
+- **auto:** CPU time 0.7–0.8 s per second of audio (model loading included), GPU memory 2952–3480 MB, ASR WER 0.000. At the start of the runs: load average 0.8–0.9, GPU at 54 °C
 
 ## Quality
 

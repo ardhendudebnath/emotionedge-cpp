@@ -15,9 +15,9 @@ emotion-token NLLB LoRA) and emotion out (Kokoro-82M with learned style offsets)
 progress: the models run on a GPU when there is one (see [Real engines](#real-engines)).
 
 [docs/benchmark.md](docs/benchmark.md) has the current numbers, re-measured with one command. On
-an RTX 5070 Ti laptop GPU, jfk.wav runs end to end in 340–389 ms p50 and 590–641 ms p95 (target
-< 800 ms p95). Back-to-back speech still misses the target, though by less (926–975 ms p95, from
-1648–1687 before speculative finals), and so does a CPU alone (1608–1720 ms on jfk.wav).
+an RTX 5070 Ti laptop GPU, every latency target is met: jfk.wav runs end to end in 340–389 ms p50
+and 438–578 ms p95 (target < 800 ms p95), and three back-to-back sentences in 657–696 ms p95, with
+[catch-up playout](#real-engines). A CPU alone still misses it (1040–1065 ms p95 on jfk.wav).
 
 ![emotionedge-desktop: captions with the emotion read from the voice, the Hindi translation and its ECS, and the live latency budget](docs/images/desktop.png)
 
@@ -192,6 +192,39 @@ each:
   them.
 - **Limit:** the first utterance's length is predicted from the English calibration render,
   which runs about 30% short for Hindi. Later ones use the voice's measured pace.
+
+**Catch-up playout** (phase 5) fixes what pacing cannot. Pacing fixes a speed when it renders,
+guessing when the next sentence will come and how long the Hindi will run. On the benchmark's
+sentences it spoke sentence 2 at 1.09×. But sentence 3 came about 0.2 s sooner than it expected,
+and the Hindi ran 8% longer than predicted, so sentence 3's translation waited 0.5 s behind it.
+Playback knows more: once the speaker starts talking again, another translation is on its way.
+From then on, the device plays the translation still queued up to 1.3× faster
+(`catch_up_speed`):
+- **WSOLA**, pitch kept (`core/audio/time_compressor.cpp`), run in the audio callback
+  (`RingSink::pull`): no allocation or locks.
+- **Never the next translation's start:** compression stops before it, and the next one plays
+  as synthesized. With nobody waiting, audio passes through untouched.
+- **Ramped**, 1.0× to 1.3× over 0.2 s, and back.
+- **First audio is marked when it plays**, not when it is queued, so the latency rows count the
+  time caught up.
+
+Real time on the GPU, 8 runs each, in 4 interleaved blocks:
+
+| | Sentences p95 | Sentences playout buffer p95 | jfk.wav p95 | Dropouts |
+|---|---|---|---|---|
+| catch-up off | 1677 ms (max 1875) | 1255 ms | 692 ms | 0 |
+| **catch-up on** | **688 ms (max 822)** | **306 ms** | **510 ms** | **0** |
+
+- **Every run with catch-up beat every run without.** Each block rendered its own Piper input,
+  and the gaps between the sentences differed by up to 0.2 s, hence the spread. The benchmark
+  now renders Piper without its noise, so the input is the same every time.
+- **Intelligibility:** at 1.3×, Whisper-small's median CER is 0.144 on catch-up and 0.162 on
+  Kokoro rendering at 1.3× (24 sentences × 4 voices, `eval_tts_speed.py --stretcher`). That is
+  within the comparison's noise: at 1.0×, where catch-up passes the audio through, its capped
+  mean differs by 0.014 between renders.
+- **The benchmark** now meets every latency target on the GPU (657–696 ms p95 on the sentences).
+  On the CPU, jfk.wav's playout buffer p95 fell from 500–778 to 58–154 ms, and its end to end
+  to 1040–1065 ms p95; the sentences are at 1222–1287 ms.
 
 **Speaker-aware barge-in** (phase 4) lets a listener interrupt the translation, while the
 interpreted speaker can talk on over it. When speech starts while the translation plays, the
@@ -392,7 +425,10 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
    - speculative finals: ASR and emotion start their final pass inside the 160 ms endpoint
      hangover (jfk.wav end to end p50 397 → 348 ms, the same transcripts on RAVDESS);
    - translations batched across the server's sessions on the GPU: three clients at once
-     991 → 582 ms end to end p50, one client unchanged.
+     991 → 582 ms end to end p50, one client unchanged;
+   - catch-up playout: while newer speech waits, the queued translation plays up to 1.3× faster
+     (WSOLA). Three back-to-back sentences on the GPU: 1677 → 688 ms end to end p95, the last
+     latency target met.
 
    Next: Android and Jetson builds.
 
