@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+
 #include "core/translate/control_tokens.hpp"
 #include "core/translate/emphasis.hpp"
 #include "core/translate/glossary.hpp"
@@ -145,6 +147,101 @@ TEST(TranslateStage, EmitsTheBlueprintWalkthrough) {
     EXPECT_EQ(out[0].emotion.label, EmotionLabel::Anger);
     EXPECT_GE(ctx.telemetry().milestone_us(1, telemetry::Milestone::MtFinal), 0);
 }
+
+// Streaming: the leading words go ahead, then the whole translation, which starts with them.
+// An emphasized utterance needs the whole alignment, so it is translated in one pass.
+TEST(TranslateStage, StreamsTheLeadingWordsAhead) {
+    test::RecordingContext ctx;
+    ctx.mutable_pipeline().source_language = "en";
+    ctx.mutable_pipeline().target_language = "hi";
+    ctx.mutable_params().set("engine", "phrasebook");
+    ctx.mutable_params().set("phrasebook", std::string(EE_SOURCE_DIR) + "/config/phrasebook.yaml");
+    ctx.mutable_params().set("stream", "on");
+    ctx.mutable_params().set("stream_words", "3");
+    ctx.telemetry().begin_utterance(1);
+    TranslateStage stage;
+    stage.open(ctx);
+
+    Frame u;
+    u.reset(FrameKind::Utterance);
+    u.utterance = 1;
+    u.flags = frame_flags::kFinal;
+    u.language = "en";
+    u.text = "I can't believe you did this!";
+    for (const char* w : {"I", "can't", "believe", "you", "did", "this!"}) u.words.push_back({w, 0.0f, 0.0f, 1.0f});
+    u.emotion = walkthrough_emotion();
+    stage.process(u);
+
+    const auto out = ctx.of(FrameKind::Translation);
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_TRUE(out[0].has(frame_flags::kLeading));
+    EXPECT_FALSE(out[0].is_final());
+    EXPECT_EQ(out[0].text, "मुझे यकीन नहीं");
+    EXPECT_GE(out[0].expected_words, 4u);  // more than the words sent ahead
+    EXPECT_EQ(out[0].emotion.label, EmotionLabel::Anger);
+    EXPECT_TRUE(out[1].is_final());
+    EXPECT_EQ(out[1].text, kHindi);
+    EXPECT_GE(ctx.telemetry().milestone_us(1, telemetry::Milestone::MtFinal), 0);
+
+    u.utterance = 2;
+    u.emphasis = {2};
+    stage.process(u);
+    const auto all = ctx.of(FrameKind::Translation);
+    ASSERT_EQ(all.size(), 3u);
+    EXPECT_TRUE(all[2].is_final());
+    EXPECT_EQ(all[2].emphasis, (std::vector<std::uint16_t>{1}));
+}
+
+#if defined(EE_HAVE_CTRANSLATE2)
+// The streaming final pass on the real NLLB, when it is present: EE_NLLB_MODEL_DIR=<CTranslate2
+// export with sentencepiece.bpe.model>. The leading words are the greedy translation's first
+// words, after a target prefix too (CTranslate2's callback reports the prefix's positions as
+// well), and the rest after them gives the same whole.
+TEST(Ct2Translator, StopsAfterTheLeadingWords) {
+    const char* dir = std::getenv("EE_NLLB_MODEL_DIR");
+    if (dir == nullptr) GTEST_SKIP() << "set EE_NLLB_MODEL_DIR to run";
+    Params p;
+    p.set("device", "cpu");
+    p.set("stream", "on");
+    p.set("beam", "1");
+    p.set("control_tokens", "on");
+    p.set("warmup", "false");
+    const auto mt = make_ct2_translator(dir, p);
+    ASSERT_TRUE(mt->streams());
+    TranslationRequest r;
+    r.source = "<emo=neutral a=0.0 reg=casual> And so, my fellow Americans, ask not what your country can do for you.";
+    r.source_language = "en";
+    r.target_language = "hi";
+    const std::string whole = mt->translate(r).text;
+    const std::vector<std::string> words = split_words(whole, "hi");
+    ASSERT_GT(words.size(), 4u);
+
+    r.stop_after_words = 2;
+    const TranslationResult lead = mt->translate(r);
+    EXPECT_TRUE(lead.partial);
+    EXPECT_EQ(lead.text, join_text({words[0], words[1]}, "hi"));
+    r.target_prefix = {words[0], words[1]};
+    const TranslationResult more = mt->translate(r);
+    EXPECT_TRUE(more.partial);
+    EXPECT_EQ(more.text, join_text({words[0], words[1], words[2], words[3]}, "hi"));
+    r.stop_after_words = 0;
+    EXPECT_EQ(mt->translate(r).text, whole);
+
+    // An emphasized word's alignment comes with the leading words, as the whole has it.
+    TranslationRequest e;
+    e.source = "<emo=neutral a=0.0 reg=casual> I can't <em>believe</em> you did this.";
+    e.source_language = "en";
+    e.target_language = "hi";
+    e.want_alignment = true;
+    const TranslationResult all = mt->translate(e);
+    ASSERT_EQ(all.alignment.size(), 1u);
+    ASSERT_LT(all.alignment[0].second + 2u, split_words(all.text, "hi").size());
+    e.stop_after_words = all.alignment[0].second + 1u;  // up to the emphasized word
+    const TranslationResult head = mt->translate(e);
+    EXPECT_TRUE(head.partial);
+    EXPECT_EQ(head.alignment, all.alignment);
+}
+#endif
 
 TEST(TranslateStage, DraftsFollowWaitK) {
     test::RecordingContext ctx;

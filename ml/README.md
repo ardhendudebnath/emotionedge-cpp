@@ -137,6 +137,10 @@ the runtime's `gpu_compute_type`. `--device cpu --compute-type int8` scores the 
 The two agree: FLORES chrF 56.72 / BLEU 31.47 on the CPU, against 56.70 / 31.35 on CUDA, with
 no leaks on either.
 
+`--beam` and `--stream-words` score other decoding settings: greedy decoding (`--beam 1`) gives
+56.27 / 30.84 on the CPU, and the fast CPU profile's streaming final pass (`--stream-words 5`:
+five words greedily, then the rest at beam 2 after them) 56.55 / 31.27.
+
 ## Emotion out: Kokoro style offsets (P2/P3)
 
 Kokoro-82M reads everything in a neutral style. emotion2vec+ heard Piper, plain Kokoro and

@@ -41,6 +41,9 @@ struct PacingConfig {
 /// speaker's voice print, drops queued clauses on barge-in, paces each utterance by the
 /// playout backlog (PacingConfig), and publishes a neutral calibration render at start-up so
 /// 5.2 can score relative to the voice's own baseline.
+///
+/// A translation's leading words (frame_flags::kLeading) are spoken as soon as they settle the
+/// first clause (leading_clause); the final Speech that follows then adds the words after it.
 class TtsStage final : public IStage {
 public:
     void open(StageContext& ctx) override;
@@ -65,6 +68,9 @@ private:
     /// Seconds a new utterance would wait before playing: playout's backlog plus the clauses
     /// still waiting here.
     [[nodiscard]] double backlog_s(const Frame& speech) const;
+    /// The utterance's adaptive pacing speed, decided on its first Speech frame; `behind` gets
+    /// the backlog it saw.
+    float pace_for(const Frame& speech, double* behind = nullptr);
 
     StageContext* ctx_ = nullptr;
     HotSwap<ITtsEngine> engine_;
@@ -76,8 +82,17 @@ private:
     double gap_s_ = 1.0;
     double last_src_end_ = -1.0;
     telemetry::Histogram* pace_metric_ = nullptr;
+    telemetry::Counter* leading_metric_ = nullptr;
     std::size_t chunk_samples_ = 2400;
     std::deque<Job> pending_;
+    /// The utterance whose leading clause was spoken ahead: its words and pace.
+    struct Lead {
+        std::uint64_t utterance = 0;
+        std::string text;
+        std::size_t words = 0;
+        float pace = 1.0f;
+        double behind = 0.0;  ///< the backlog it was paced for, before its own audio
+    } lead_;
     std::map<std::uint64_t, SpeakerVoice> voices_;
     SpeakerVoice latest_voice_{};
     bool have_voice_ = false;

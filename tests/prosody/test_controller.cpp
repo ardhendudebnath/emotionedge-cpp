@@ -209,6 +209,53 @@ TEST(ControllerStage, TurnsTranslationsIntoSpeechRequestsAndAppliesFeedback) {
     EXPECT_GT(stage.controller().correction().a, 0.0f);
 }
 
+// A streaming translation's leading words and its final are one utterance with one plan, even
+// if feedback arrives in between; the next utterance gets the correction. Drafts get nothing.
+TEST(ControllerStage, PlansLeadingWordsAndTheirFinalOnce) {
+    test::RecordingContext ctx;
+    ctx.telemetry().begin_utterance(1);
+    EmotionControllerStage stage;
+    stage.open(ctx);
+    Frame t;
+    t.reset(FrameKind::Translation);
+    t.utterance = 1;
+    t.language = "hi";
+    t.text = "मुझे यकीन";
+    stage.process(t);  // a draft
+    EXPECT_TRUE(ctx.of(FrameKind::Speech).empty());
+
+    t.flags = frame_flags::kLeading;
+    t.text = "मुझे यकीन नहीं हो रहा";
+    t.expected_words = 8;
+    t.emotion.vad = {-0.62f, 0.78f, 0.55f};
+    t.emotion.label = EmotionLabel::Anger;
+    t.emotion.confidence = 0.87f;
+    stage.process(t);
+    Frame fb;
+    fb.reset(FrameKind::Feedback);
+    fb.score = 0.5f;
+    fb.delta = {0.0f, -0.4f, 0.0f};
+    fb.axis_confidence = {0.0f, 0.9f, 0.0f};
+    stage.process(fb);
+    t.flags = frame_flags::kFinal;
+    t.text = "मुझे यकीन नहीं हो रहा कि तुमने ऐसा किया!";
+    stage.process(t);
+
+    const auto speech = ctx.of(FrameKind::Speech);
+    ASSERT_EQ(speech.size(), 2u);
+    EXPECT_TRUE(speech[0].has(frame_flags::kLeading));
+    EXPECT_EQ(speech[0].expected_words, 8u);
+    EXPECT_TRUE(speech[1].is_final());
+    EXPECT_EQ(speech[1].text, t.text);
+    EXPECT_EQ(speech[1].prosody.pitch_pct, speech[0].prosody.pitch_pct);
+    EXPECT_EQ(speech[1].prosody.rate_pct, speech[0].prosody.rate_pct);
+    EXPECT_EQ(speech[1].delta, speech[0].delta);
+
+    t.utterance = 2;
+    stage.process(t);
+    EXPECT_NE(ctx.of(FrameKind::Speech)[2].delta, speech[0].delta);  // the correction, from here on
+}
+
 TEST(Config, ExpressivityFileMatchesBuiltInDefaults) {
     const auto file = ExpressivityProfiles::load(std::string(EE_SOURCE_DIR) + "/config/expressivity.yaml");
     const auto builtin = ExpressivityProfiles::defaults();

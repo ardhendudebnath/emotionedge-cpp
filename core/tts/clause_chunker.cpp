@@ -61,4 +61,27 @@ std::vector<Clause> chunk_clauses(std::string_view text, std::string_view langua
     return out;
 }
 
+std::optional<Clause> leading_clause(std::string_view prefix, std::string_view language,
+                                    const std::vector<std::uint16_t>& emphasis, const ChunkerConfig& cfg) {
+    const std::vector<std::string> words = split_words(prefix, language);
+    const std::string_view sep = uses_spaces(language) ? " " : "";
+    Clause current;
+    // chunk_clauses's first cut, where words after the prefix cannot change it: every word
+    // counted here is in the prefix, so "two words left" holds for the longer text too.
+    for (std::size_t i = 0; i + 1 < words.size(); ++i) {
+        if (!current.text.empty()) current.text += sep;
+        current.text += words[i];
+        if (std::find(emphasis.begin(), emphasis.end(), static_cast<std::uint16_t>(i)) != emphasis.end()) {
+            current.emphasis.push_back(static_cast<std::uint16_t>(current.words));
+        }
+        ++current.words;
+        const bool first_full = cfg.max_first_words > 0 && current.words >= cfg.max_first_words && i + 2 < words.size();
+        if ((ends_clause(words[i]) && current.text.size() >= cfg.min_first_chars) || current.text.size() >= cfg.max_chars ||
+            first_full) {
+            return current;
+        }
+    }
+    return std::nullopt;
+}
+
 }  // namespace ee

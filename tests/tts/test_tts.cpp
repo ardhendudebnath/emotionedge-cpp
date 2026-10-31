@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,23 @@ TEST(ClauseChunker, CapsTheFirstClauseForSlowTts) {
     EXPECT_EQ(clauses[1].emphasis, (std::vector<std::uint16_t>{1}));  // "you"
     // Never leaves fewer than two words behind.
     EXPECT_EQ(chunk_clauses("one two three four", "en", {}, cfg).size(), 1u);
+}
+
+// The first clause of a translation still being decoded: given once its words settle where
+// chunk_clauses would cut, whatever follows, and with a word after it.
+TEST(ClauseChunker, FindsTheLeadingClauseOnceItsEndIsSettled) {
+    ChunkerConfig cfg;
+    cfg.max_first_words = 3;
+    const std::string full = "I really cannot believe you did this to me";
+    const auto lead = leading_clause("I really cannot believe you", "en", {1, 4}, cfg);
+    ASSERT_TRUE(lead.has_value());
+    EXPECT_EQ(lead->text, chunk_clauses(full, "en", {}, cfg)[0].text);
+    EXPECT_EQ(lead->words, 3u);
+    EXPECT_EQ(lead->emphasis, (std::vector<std::uint16_t>{1}));  // "really"; "you" is past the clause
+    EXPECT_FALSE(leading_clause("I really cannot believe", "en", {}, cfg));  // two more words are needed to cut at three
+    // Punctuation settles it, with a word after it to show the text goes on.
+    EXPECT_EQ(leading_clause("और इसलिए, मेरे", "hi", {}, cfg)->text, "और इसलिए,");
+    EXPECT_FALSE(leading_clause("और इसलिए,", "hi", {}, cfg));
 }
 
 TEST(ClauseChunker, HandlesDevanagariAndRunOnText) {
@@ -204,6 +222,46 @@ TEST(TtsStage, BargeInDropsQueuedClauses) {
     EXPECT_EQ(ctx.emitted.size(), first);
 }
 
+// A streaming translation: its first clause is spoken from the leading words, before the final
+// arrives; the final then adds only the words after it, and ends the utterance.
+TEST(TtsStage, SpeaksTheLeadingClauseAheadThenTheRest) {
+    test::RecordingContext ctx;
+    ctx.mutable_params().set("calibration", "false");
+    ctx.mutable_params().set("max_first_words", "3");
+    ctx.telemetry().begin_utterance(1);
+    TtsStage stage;
+    stage.open(ctx);
+    Frame speech;
+    speech.reset(FrameKind::Speech);
+    speech.utterance = 1;
+    speech.language = "en";
+    speech.flags = frame_flags::kLeading;
+    speech.text = "I really cannot believe";  // not enough to tell where the first clause ends
+    stage.process(speech);
+    EXPECT_TRUE(ctx.of(FrameKind::SynthAudio).empty());
+    speech.text = "I really cannot believe you";
+    stage.process(speech);
+    const auto ahead = ctx.of(FrameKind::SynthAudio);
+    ASSERT_FALSE(ahead.empty());
+    EXPECT_EQ(ahead.back().text, "I really cannot");
+    EXPECT_TRUE(ahead.back().has(frame_flags::kClauseEnd));
+    EXPECT_FALSE(ahead.back().is_final());
+    EXPECT_GE(ctx.telemetry().milestone_us(1, telemetry::Milestone::TtsFirstChunk), 0);
+
+    speech.flags = frame_flags::kFinal;
+    speech.text = "I really cannot believe you did this to me";
+    stage.process(speech);
+    stage.close();
+    const auto chunks = ctx.of(FrameKind::SynthAudio);
+    std::vector<std::string> clauses;
+    for (const Frame& c : chunks) {
+        if (c.has(frame_flags::kClauseEnd)) clauses.push_back(c.text);
+    }
+    EXPECT_EQ(clauses, (std::vector<std::string>{"I really cannot", "believe you did this to me"}));
+    EXPECT_TRUE(chunks.back().is_final());
+    EXPECT_EQ(chunks.back().seq, 1u);
+}
+
 TEST(PacingConfig, RampsTheSpeakingRateWithTheBacklog) {
     EXPECT_EQ(PacingConfig{}.speed(10.0), 1.0f);  // off by default
     const PacingConfig pacing{.start_s = 0.25f, .full_s = 1.5f, .max_speed = 1.3f};
@@ -231,10 +289,15 @@ struct PacedRender {
     test::RecordingContext ctx;
     TtsStage stage;
 
-    PacedRender() {
+    /// `fit`: pacing's fit term on, with the calibration render that seeds the length estimate.
+    explicit PacedRender(bool fit = false) {
         ctx.services().audio = &io;
-        ctx.mutable_params().set("calibration", "false");
+        ctx.mutable_params().set("calibration", fit ? "true" : "false");
         ctx.mutable_params().set("pacing.max_speed", "1.3");
+        if (fit) {
+            ctx.mutable_params().set("pacing.fit_next", "true");
+            ctx.mutable_params().set("max_first_words", "3");
+        }
         stage.open(ctx);
     }
     void say(std::uint64_t utterance, const std::string& text) {
@@ -279,6 +342,37 @@ TEST(TtsStage, PacesAnUtteranceByThePlayoutBacklog) {
         EXPECT_LT(ratio, 0.9) << "clause " << i;  // syllables at 1/1.3; the formant voice's word gaps stay
         EXPECT_GT(ratio, 1.0 / 1.3 - 0.02) << "clause " << i;
     }
+}
+
+// Pacing decided on a translation's leading words guesses its length (expected_words). When the
+// final shows it longer, the rest is spoken at the speed the whole needed: as fast as when the
+// guess was right, only the clause spoken ahead slower.
+TEST(TtsStage, RepacesTheRestWhenTheFinalIsLongerThanGuessed) {
+    const std::string head = "I really cannot believe you";
+    const std::string whole = "I really cannot believe you did this to me after all these years we spent together";
+    const auto render = [&](std::uint32_t expected) {
+        auto r = std::make_unique<PacedRender>(true);
+        Frame speech;
+        speech.reset(FrameKind::Speech);
+        speech.utterance = 1;
+        speech.language = "en";
+        speech.src_end = 1.5;  // with the 1 s default gap: the whole needs the cap, five words alone none
+        speech.flags = frame_flags::kLeading;
+        speech.text = head;
+        speech.expected_words = expected;
+        r->stage.process(speech);
+        speech.flags = frame_flags::kFinal;
+        speech.text = whole;
+        r->stage.process(speech);
+        r->stage.close();
+        return r->clauses(1);
+    };
+    const auto low = render(6);    // guessed short: the leading clause at a lower speed
+    const auto right = render(16);
+    ASSERT_GE(low.size(), 2u);
+    ASSERT_EQ(low.size(), right.size());
+    EXPECT_GT(low[0], right[0]);
+    for (std::size_t i = 1; i < low.size(); ++i) EXPECT_EQ(low[i], right[i]) << "clause " << i;
 }
 
 // Clauses still waiting in the TTS are backlog too: they have not reached playback yet.

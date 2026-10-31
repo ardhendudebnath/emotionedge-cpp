@@ -1,0 +1,21 @@
+# Fast CPU profile: pipeline.engines.yaml on the CPU alone, with Piper's Hindi voice in place
+# of Kokoro and a streaming translation. It meets the < 800 ms end-to-end target without a GPU:
+# jfk.wav 737-788 ms p95 (README, "Fast CPU profile"). A short first clause costs Piper ~85 ms
+# on the CPU, Kokoro ~300 ms.
+#
+# It gives up most of the emotion out: Piper takes the controller's rate, loudness and pauses,
+# but not pitch, range or contour, nor Kokoro's style offsets and learned prosody plan, and it
+# has one voice (no matching to the speaker). On RAVDESS its output is heard as non-neutral
+# 0-2% of the time, against ~20% for Kokoro. The emotion in and the captions are as in
+# pipeline.engines.yaml; the translation's first five words are greedy (FLORES chrF -0.17).
+base: pipeline.engines.yaml
+set:
+  pipeline.device: cpu
+  tts.engine: piper
+  tts.model_id: tts.piper.hi_IN.pratham.medium
+  tts.threads: 2
+  controller.learned_plan: false
+  # The first five words of the translation go ahead to the TTS; the controller plans them from
+  # T6 while T4 decodes the rest (T5 renders them).
+  translate.stream: on
+  controller.thread: T6-playback

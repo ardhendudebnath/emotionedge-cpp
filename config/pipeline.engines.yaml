@@ -148,6 +148,15 @@ stages:
       gpu_compute_type: int8_float16   # on CUDA: what the phase-2 quality gate measured
       beam: 2
       threads: 4
+      # Phase 5: streaming final pass (on in pipeline.cpu-fast.yaml). NLLB decodes the first
+      # stream_words words greedily and sends them ahead, so the TTS starts the first clause
+      # while the rest is translated (with them as its prefix). 5 words settle a 3-word first
+      # clause. The greedy start costs a little: FLORES chrF 56.72 -> 56.55 on the CPU
+      # (eval_mt.py --stream-words 5). Off here: with Kokoro on the CPU the first clause waits
+      # for the previous sentence's clauses anyway, and back-to-back speech came out slower
+      # (p95 1256 -> 1589 ms). It needs the controller off T4 (thread: T6-playback).
+      stream: off             # off | on | auto (on the CPU)
+      stream_words: 5
       # Sessions in one process (serve --max-sessions) share one loaded NLLB. On a GPU, sentences
       # that sessions translate at the same moment go through it as one batch (batch: auto). On
       # the CPU, each session gets a replica, and the replicas share the weights.

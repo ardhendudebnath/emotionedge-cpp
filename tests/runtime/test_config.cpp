@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "core/runtime/config.hpp"
@@ -192,7 +193,33 @@ TEST(Config, ShippedPipelinesParse) {
         EXPECT_FALSE(spec.stages.empty());
         ++parsed;
     }
-    EXPECT_GE(parsed, 2);
+    EXPECT_GE(parsed, 3);
+}
+
+// A profile is its base config with the `set` overrides applied: the fast CPU profile is the
+// engines pipeline on the CPU with Piper and a streaming translation, and nothing else changed.
+TEST(Config, ProfilesApplyTheirOverridesToTheBase) {
+    const std::filesystem::path dir = std::filesystem::path(EE_SOURCE_DIR) / "config";
+    const PipelineSpec base = load_pipeline(dir / "pipeline.engines.yaml");
+    const PipelineSpec fast = load_pipeline(dir / "pipeline.cpu-fast.yaml");
+    EXPECT_EQ(fast.device, "cpu");
+    EXPECT_EQ(fast.find_stage("tts")->params.str("engine"), "piper");
+    EXPECT_FALSE(fast.find_stage("controller")->params.flag("learned_plan", true));
+    EXPECT_EQ(base.find_stage("translate")->params.str("stream"), "off");
+    EXPECT_EQ(fast.find_stage("translate")->params.str("stream"), "on");
+    EXPECT_EQ(base.find_stage("controller")->thread, "T4-understand");
+    EXPECT_EQ(fast.find_stage("controller")->thread, "T6-playback");
+    EXPECT_EQ(fast.find_stage("asr")->params.str("threads"), base.find_stage("asr")->params.str("threads"));
+    EXPECT_EQ(fast.stages.size(), base.stages.size());
+    EXPECT_EQ(fast.edges.size(), base.edges.size());
+    EXPECT_EQ(fast.models_manifest, base.models_manifest);  // ${config_dir} of the base, not the profile
+
+    const std::filesystem::path tmp = std::filesystem::temp_directory_path() / "ee_profile_test";
+    std::filesystem::create_directories(tmp);
+    std::ofstream(tmp / "loop.yaml") << "base: loop.yaml\n";
+    EXPECT_THROW((void)load_pipeline(tmp / "loop.yaml"), ConfigError);
+    std::ofstream(tmp / "bad.yaml") << "base: " << (dir / "pipeline.yaml").generic_string() << "\nset:\n  nostage.x: 1\n";
+    EXPECT_THROW((void)load_pipeline(tmp / "bad.yaml"), ConfigError);
 }
 
 TEST(Params, TypedGettersValidateValues) {

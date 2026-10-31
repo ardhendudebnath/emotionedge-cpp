@@ -73,6 +73,9 @@ struct PipelineSpec {
 
 /// Parses a pipeline YAML file. `${config_dir}` in any string value expands to the
 /// directory containing the file. Throws ConfigError; the result is validated.
+///
+/// A profile file has `base: other.yaml` (relative to it) and `set:`, a map of overrides as
+/// apply_override takes them: the base config with those settings changed.
 [[nodiscard]] PipelineSpec load_pipeline(const std::filesystem::path& yaml_path);
 [[nodiscard]] PipelineSpec parse_pipeline(std::string_view yaml_text,
                                           const std::filesystem::path& config_dir = {});
