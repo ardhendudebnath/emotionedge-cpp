@@ -76,6 +76,10 @@ public:
             length_scale_ = inf->value("length_scale", length_scale_);
             noise_w_ = inf->value("noise_w", noise_w_);
         }
+        // Piper samples noise for the audio and the durations on every render; 0 makes renders
+        // repeatable (benchmark input).
+        noise_scale_ = params.real("noise_scale", noise_scale_);
+        noise_w_ = params.real("noise_w", noise_w_);
         multi_speaker_ = cfg.value("num_speakers", 1) > 1;
         speaker_ = params.integer("speaker", 0);
         for (const auto& [phoneme, ids] : cfg.at("phoneme_id_map").items()) {

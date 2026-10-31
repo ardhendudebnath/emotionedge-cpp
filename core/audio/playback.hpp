@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <span>
 #include <vector>
@@ -36,6 +37,11 @@ private:
 /// on AudioIo::timeline where it would have played live: after the source speech ended plus the
 /// nominal pipeline latency, never overlapping the previous utterance. Emits a Playout frame
 /// per utterance for captions.
+///
+/// Live catch-up (`catch_up_speed` > 1): while newer speech waits behind the translation playing
+/// (queued after it, or still being spoken or translated: AudioIo::speech_utterance), the
+/// device plays the rest up to that much faster (IAudioSink::set_catch_up), but never the next
+/// utterance's start. First audio is then marked when it actually plays, not when queued.
 class PlaybackStage final : public IStage {
 public:
     void open(StageContext& ctx) override;
@@ -50,6 +56,10 @@ private:
     void finish_utterance();
     /// Tells the TTS how far playout runs behind (AudioIo::playout_delay).
     void publish_backlog();
+    /// Catch-up: marks first audio as utterances start playing, and sets the device's speed.
+    void follow_playout();
+    /// At close: waits while the device plays up to the last queued utterance's start.
+    void await_first_audio();
 
     StageContext* ctx_ = nullptr;
     AudioIo* io_ = nullptr;
@@ -74,6 +84,15 @@ private:
     double out_start_ = 0.0;
     double write_pos_ = 0.0;
     std::int64_t written_ = 0;
+
+    double catch_up_ = 1.0;
+    std::uint64_t total_written_ = 0;  ///< samples written to the device, all utterances
+    struct Start {
+        std::uint64_t utterance;
+        std::uint64_t index;  ///< its first sample, counted like IAudioSink::played()
+    };
+    std::deque<Start> starts_;  ///< queued utterances not yet playing
+    std::uint64_t playing_ = 0;
 };
 
 }  // namespace ee

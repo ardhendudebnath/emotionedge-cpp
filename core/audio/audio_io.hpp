@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/audio/ring_buffer.hpp"
+#include "core/audio/time_compressor.hpp"
 
 namespace ee {
 
@@ -39,6 +40,14 @@ public:
     virtual void flush() {}
     /// True while an utterance is mid-playout, so running dry is a dropout rather than its end.
     virtual void set_streaming(bool streaming) noexcept { (void)streaming; }
+    /// Catch-up playout: play what is queued up to `speed` times faster (1 = as written), but
+    /// nothing from sample `limit` on (counted like played()), where the next utterance starts.
+    virtual void set_catch_up(double speed, std::uint64_t limit) noexcept {
+        (void)speed;
+        (void)limit;
+    }
+    /// Samples written so far that have played or been dropped: the next one to play.
+    [[nodiscard]] virtual std::uint64_t played() const noexcept { return 0; }
 };
 
 /// The whole signal is available up front (offline runs and tests).
@@ -79,7 +88,7 @@ private:
     std::atomic<std::uint64_t> overflow_{0};
 };
 
-/// Drained by the playback callback (T0).
+/// Drained by the playback callback (T0), which also runs the catch-up (TimeCompressor).
 class RingSink final : public IAudioSink {
 public:
     RingSink(int sample_rate, std::size_t capacity);
@@ -92,18 +101,31 @@ public:
 
     [[nodiscard]] int sample_rate() const noexcept override { return rate_; }
     std::size_t write(std::span<const float> samples) override { return ring_.write(samples); }
-    [[nodiscard]] std::size_t queued() const noexcept override { return ring_.read_available(); }
+    [[nodiscard]] std::size_t queued() const noexcept override {
+        return ring_.read_available() + staged_.load(std::memory_order_acquire);
+    }
     void flush() override { flush_requested_.store(true, std::memory_order_release); }
     void set_streaming(bool streaming) noexcept override { streaming_.store(streaming, std::memory_order_release); }
+    /// Set the limit before writing the samples it guards: pull() reads it after the ring.
+    void set_catch_up(double speed, std::uint64_t limit) noexcept override {
+        catch_up_.store(speed, std::memory_order_relaxed);
+        limit_.store(limit, std::memory_order_release);
+    }
+    [[nodiscard]] std::uint64_t played() const noexcept override { return played_.load(std::memory_order_acquire); }
     [[nodiscard]] std::uint64_t underrun_samples() const noexcept { return underrun_.load(); }
 
 private:
     SpscRing<float> ring_;
     int rate_;
+    TimeCompressor compressor_;  // T0 only
     SpscRing<float>* tap_ = nullptr;
     std::atomic<bool> flush_requested_{false};
     std::atomic<bool> streaming_{false};
     std::atomic<std::uint64_t> underrun_{0};
+    std::atomic<double> catch_up_{1.0};
+    std::atomic<std::uint64_t> limit_{TimeCompressor::kNoLimit};
+    std::atomic<std::size_t> staged_{0};
+    std::atomic<std::uint64_t> played_{0};
 };
 
 /// Offline playout: audio is placed at explicit times on a timeline that becomes the output WAV.
@@ -131,6 +153,9 @@ struct AudioIo {
     /// RingSink::set_played_tap): the echo canceller's reference (1.2).
     SpscRing<float>* echo_reference = nullptr;
     std::atomic<bool> playback_active{false};    ///< translated speech is playing (barge-in)
+    /// The newest utterance the speaker has started (the segmenter sets it): while it is newer
+    /// than the translation playing, playback catches up.
+    std::atomic<std::uint64_t> speech_utterance{0};
 
     // How far the translation runs behind, for the TTS's adaptive pacing (4.2). Playback (5.1)
     // writes both; each run mode uses one.

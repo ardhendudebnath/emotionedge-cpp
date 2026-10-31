@@ -212,7 +212,13 @@ stages:
     type: playback
     thread: T6-playback
     tick_ms: 5
-    params: { jitter_ms: 60, crossfade_ms: 5 }
+    params:
+      jitter_ms: 60
+      crossfade_ms: 5
+      # Phase 5: catch-up. Pacing picks a speed when it renders; when the speaker then talks on
+      # sooner than it guessed, the translation still playing is played faster (WSOLA, pitch
+      # kept) until the next one is due, never into the next one's start. 1.3 as pacing's cap.
+      catch_up_speed: 1.3
 
   - name: consistency
     type: consistency

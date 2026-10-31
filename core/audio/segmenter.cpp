@@ -134,12 +134,15 @@ void SegmenterStage::handle_window(float probability) {
         ctx_->services().telemetry->begin_utterance(utterance_);
         utterance_start_pos_ = preroll_.empty() ? current_.pos : preroll_.front().pos;
         speech_end_pos_ = current_.pos + static_cast<std::int64_t>(window_);
-        if (AudioIo* io = ctx_->services().audio; barge_in_ && io != nullptr && io->playback_active.load()) {
-            Frame& barge = ctx_->make(FrameKind::Control);
-            barge.flags = frame_flags::kBargeIn;
-            barge.utterance = utterance_;
-            barge.t_origin = current_.origin;
-            ctx_->emit(barge);
+        if (AudioIo* io = ctx_->services().audio; io != nullptr) {
+            io->speech_utterance.store(utterance_, std::memory_order_relaxed);  // playback's catch-up
+            if (barge_in_ && io->playback_active.load()) {
+                Frame& barge = ctx_->make(FrameKind::Control);
+                barge.flags = frame_flags::kBargeIn;
+                barge.utterance = utterance_;
+                barge.t_origin = current_.origin;
+                ctx_->emit(barge);
+            }
         }
         bool first = true;
         for (Window& w : preroll_) {
