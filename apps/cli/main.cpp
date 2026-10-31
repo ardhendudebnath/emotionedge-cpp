@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/audio/resampler.hpp"
+#include "core/audio/time_compressor.hpp"
 #include "core/audio/wav.hpp"
 #include "core/emotion/acoustic.hpp"
 #include "core/emotion/fusion.hpp"
@@ -77,6 +78,7 @@ commands:
              say --text "One. | Two." [--engine piper --model-id ID --manifest FILE] [--out F]
   emotion    Run only the emotion models (the config's `emotion` stage) on audio and/or text:
              emotion --input a.wav [--text "..."]  |  emotion --manifest items.jsonl --out p.jsonl
+  stretch    Play a WAV faster, as playback's catch-up does: stretch --input a.wav --speed 1.3 [--out F]
   stages     List the registered stage types
   version    Print the version
 
@@ -690,6 +692,39 @@ int cmd_emotion(const Args& args) {
     return 0;
 }
 
+/// Plays a WAV faster as playback's catch-up does (TimeCompressor, the speed ramping up from 1),
+/// e.g. to score its intelligibility (ml/eval/eval_tts_speed.py --stretcher):
+///   stretch --input speech.wav --speed 1.3 --out faster.wav
+int cmd_stretch(const Args& args) {
+    if (!args.has("input")) throw std::runtime_error("stretch needs --input FILE.wav");
+    const WavData wav = read_wav(args.get("input"));
+    const double speed = std::stod(args.get("speed", "1.3"));
+    if (speed < 1.0 || speed > 2.0) throw std::runtime_error("stretch --speed must be 1..2");
+    TimeCompressor compressor(wav.sample_rate);
+    std::vector<float> out;
+    std::vector<float> block(static_cast<std::size_t>(wav.sample_rate / 100));  // 10 ms, as a device pulls
+    std::size_t fed = 0;
+    while (true) {
+        const std::size_t ahead = compressor.lookahead(block.size());
+        if (compressor.staged() < ahead && fed < wav.samples.size()) {
+            const std::span<float> space = compressor.input_space(ahead - compressor.staged());
+            const std::size_t n = std::min(space.size(), wav.samples.size() - fed);
+            std::copy_n(wav.samples.data() + fed, n, space.data());
+            compressor.commit(n);
+            fed += n;
+        }
+        const std::size_t n = compressor.produce(block, speed);
+        if (n == 0 && fed >= wav.samples.size()) break;
+        out.insert(out.end(), block.begin(), block.begin() + static_cast<std::ptrdiff_t>(n));
+    }
+    const fs::path path = args.get("out", "out/stretch.wav");
+    if (path.has_parent_path()) fs::create_directories(path.parent_path());
+    write_wav(path, out, wav.sample_rate);
+    std::printf("wrote %s (%.2f s from %.2f s)\n", abs_path(path).c_str(), static_cast<double>(out.size()) / wav.sample_rate,
+                static_cast<double>(wav.samples.size()) / wav.sample_rate);
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -717,6 +752,7 @@ int main(int argc, char** argv) {
         if (args.command == "stages") return cmd_stages();
         if (args.command == "say") return cmd_say(args);
         if (args.command == "emotion") return cmd_emotion(args);
+        if (args.command == "stretch") return cmd_stretch(args);
         if (args.command == "version") {
             std::printf("emotionedge %s\n", EE_VERSION);
             return 0;

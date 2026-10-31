@@ -158,6 +158,10 @@ The WebSocket protocol, on `ws://HOST:PORT/?rate=16000`, where `rate` is the cli
 | server → client | text | `{"type": "done", "session": {...}}`: the session export, after the last audio. Or `{"type": "error", message}` |
 | server → client | binary | the translated speech: mono 16-bit little-endian PCM at `output_rate` (24 kHz), in 10 ms blocks. Silence is not sent |
 
+Events come in pipeline order, and `done` comes last. Audio is a separate stream, as it plays.
+So an utterance's first audio can arrive a few milliseconds before its `translation` event: key
+captions on `utterance`, not on arrival order.
+
 Measured through the server on the real engines (RTX 5070 Ti), the server's own end-to-end
 telemetry matched the in-process runs of the time (the 2026-10-05 [benchmark](../docs/benchmark.md),
 before speculative finals):

@@ -151,6 +151,7 @@ TEST(Segmenter, FlagsBargeInWhilePlaybackIsActive) {
 }
 
 // One speaker who keeps talking: with barge_in off, the playing translation is not cancelled.
+// Playback learns that newer speech has started, to catch up.
 TEST(Segmenter, BargeInCanBeTurnedOffForMonologues) {
     test::RecordingContext ctx;
     ctx.mutable_pipeline().sample_rate = 16000;
@@ -162,9 +163,12 @@ TEST(Segmenter, BargeInCanBeTurnedOffForMonologues) {
     stage.open(ctx);
     std::vector<float> audio = test::silence(0.3, 16000);
     test::append(audio, test::buzz(150.0, 0.4, 16000, 0.2f));
+    test::append(audio, test::silence(0.5, 16000));
+    test::append(audio, test::buzz(150.0, 0.4, 16000, 0.2f));
     feed(stage, audio);
     EXPECT_TRUE(ctx.of(FrameKind::Control).empty());
     EXPECT_FALSE(ctx.of(FrameKind::Audio).empty());  // the speech itself still flows
+    EXPECT_EQ(io.speech_utterance.load(), 2u);
 }
 
 }  // namespace

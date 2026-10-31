@@ -52,6 +52,7 @@ set(EE_AUDIO_SOURCES
     audio/segmenter.cpp
     audio/speaker.cpp
     audio/speech_detector.cpp
+    audio/time_compressor.cpp
     audio/wav.cpp)
 set(EE_AUDIO_DEPS ee::runtime)
 if(EE_WITH_ONNXRUNTIME)

@@ -140,8 +140,13 @@ TEST(SessionPool, StreamsReadyEventsSpeechThenDone) {
     EXPECT_EQ(kinds.front(), "ready");
     EXPECT_EQ(kinds.back(), "done");
     const auto first = [&](const std::string& k) { return std::find(kinds.begin(), kinds.end(), k) - kinds.begin(); };
-    EXPECT_LT(first("transcript"), first("translation"));
-    EXPECT_LT(first("translation"), first("audio"));
+    const auto last = static_cast<std::ptrdiff_t>(kinds.size()) - 1;  // "done"
+    EXPECT_LT(first("transcript"), first("translation"));  // one stream: the recorder's, in pipeline order
+    // Audio is a second stream: playback writes it on the thread where the recorder then posts the
+    // events, and the pump sends both. The first audio may go out just before its translation
+    // event (it did on a busy Windows runner), so only that both come before "done" is checked.
+    EXPECT_LT(first("translation"), last);
+    EXPECT_LT(first("audio"), last);
     EXPECT_GT(out.samples(), 24000u / 2);  // over 0.5 s of translated speech
     const std::vector<json> events = out.events();
     EXPECT_EQ(events.back()["session"]["utterances"].size(), 1u);

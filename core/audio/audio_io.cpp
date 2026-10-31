@@ -27,11 +27,32 @@ std::size_t RingSource::push(std::span<const float> samples) noexcept {
     return n;
 }
 
-RingSink::RingSink(int sample_rate, std::size_t capacity) : ring_(capacity), rate_(sample_rate) {}
+RingSink::RingSink(int sample_rate, std::size_t capacity)
+    : ring_(capacity), rate_(sample_rate), compressor_(sample_rate) {}
 
 std::size_t RingSink::pull(std::span<float> out) noexcept {
-    if (flush_requested_.exchange(false, std::memory_order_acq_rel)) ring_.skip(ring_.read_available());
-    const std::size_t n = ring_.read(out);
+    if (flush_requested_.exchange(false, std::memory_order_acq_rel)) {
+        compressor_.flush(ring_.skip(ring_.read_available()));
+    }
+    const double speed = catch_up_.load(std::memory_order_relaxed);
+    std::size_t n = 0;
+    if (speed > 1.0 || !compressor_.idle()) {
+        // Catching up (or finishing): the compressor plays from a few hops staged off the ring.
+        if (speed > 1.0 || compressor_.compressing()) {
+            const std::size_t ahead = compressor_.lookahead(out.size());
+            if (const std::size_t staged = compressor_.staged(); staged < ahead) {
+                compressor_.commit(ring_.read(compressor_.input_space(ahead - staged)));
+            }
+        }
+        n = compressor_.produce(out, speed, limit_.load(std::memory_order_acquire));
+    }
+    if (n < out.size() && compressor_.idle()) {
+        const std::size_t m = ring_.read(out.subspan(n));
+        compressor_.advance(m);
+        n += m;
+    }
+    staged_.store(compressor_.staged(), std::memory_order_release);
+    played_.store(compressor_.position(), std::memory_order_release);
     std::fill(out.begin() + static_cast<std::ptrdiff_t>(n), out.end(), 0.0f);
     // Running dry while an utterance is still being delivered is an audible dropout; between
     // utterances an empty ring is just silence.

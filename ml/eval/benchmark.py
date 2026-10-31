@@ -9,8 +9,8 @@ them up with the machine, the models and the spread over repeated runs.
 
 Suites (--suites, default all; results.json keeps the others, so suites can run separately):
 - latency: real-time runs, per device, of whisper.cpp's jfk.wav and of three back-to-back
-  sentences spoken by Piper (`emotionedge say`). Latency budget rows, end to end, ASR WER,
-  peak RAM, CPU time and GPU memory.
+  sentences spoken by Piper (`emotionedge say`, its noise off so every render is the same).
+  Latency budget rows, end to end, ASR WER, peak RAM, CPU time and GPU memory.
 - transfer: offline runs of the 48-clip RAVDESS input (eval_ecs.py build). ECS and the transfer
   metrics (output label agreement, non-neutral share, arousal CCC), and ASR WER.
 - emotion: the emotion stage alone (`emotionedge emotion`). Voice on RAVDESS (1440 clips),
@@ -208,8 +208,10 @@ def prepare_inputs(args) -> Dict[str, Path]:
     inputs["jfk"] = Path(jfk)
     sentences = args.out / "inputs" / "sentences.wav"
     if not sentences.exists():
+        # Without Piper's noise, every render is the same: its timing noise alone moved the gaps
+        # between the sentences by up to 0.2 s, and back-to-back latency with them.
         cmd = [args.emotionedge, "say", "--engine", "piper", "--model-id", SENTENCES_VOICE, "--manifest", args.manifest,
-               "--text", " | ".join(SENTENCES), "--out", sentences]
+               "--text", " | ".join(SENTENCES), "--out", sentences, "--set", "tts.noise_scale=0", "--set", "tts.noise_w=0"]
         if args.espeak_data:
             cmd += ["--espeak-data", args.espeak_data]
         measure(cmd, sentences.with_suffix(".log"))
@@ -409,7 +411,7 @@ def render(results: dict) -> str:
     out.append("")
 
     for name, title in (("jfk", "jfk.wav: 11 s, 4 utterances with pauses"),
-                        ("sentences", "3 back-to-back sentences: 10 s, Piper's voice")):
+                        ("sentences", "3 back-to-back sentences: 10 s, Piper's voice without its noise")):
         out += [f"## Latency, real time: {title}", "",
                 "| Row | Budget | " + " | ".join(f"{d} p50 | {d} p95" for d in devices) + " |",
                 "|---|---|" + "---|---|" * len(devices)]

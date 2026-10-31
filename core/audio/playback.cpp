@@ -1,9 +1,12 @@
 #include "core/audio/playback.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <numbers>
+#include <thread>
 
+#include "core/runtime/clock.hpp"
 #include "core/runtime/log.hpp"
 #include "core/telemetry/telemetry.hpp"
 
@@ -66,6 +69,9 @@ void PlaybackStage::open(StageContext& ctx) {
     offline_latency_s_ = p.number("offline_latency_ms", 735.0) / 1000.0;
     gap_s_ = p.number("gap_ms", 150.0) / 1000.0;
     joiner_ = std::make_unique<ChunkJoiner>(static_cast<std::size_t>(out_rate_ * p.integer("crossfade_ms", 5) / 1000));
+    catch_up_ = p.number("catch_up_speed", 1.0);
+    if (catch_up_ < 1.0 || catch_up_ > 2.0) throw ConfigError("playback catch_up_speed must be 1..2");
+    if (mode_ != Mode::Live) catch_up_ = 1.0;  // offline playout places utterances, it does not queue them
     if (io_ != nullptr) {
         io_->playout_queued_s.store(0.0);
         io_->playout_free_at_s.store(-1e9);
@@ -107,6 +113,7 @@ void PlaybackStage::process(Frame& f) {
         cancel_before_ = std::max(cancel_before_, f.utterance);
         ready_.clear();
         joiner_->reset();
+        starts_.clear();  // flushed unplayed: no first audio
         if (mode_ == Mode::Live) {
             io_->playback->flush();
             io_->playback->set_streaming(false);
@@ -157,6 +164,13 @@ void PlaybackStage::deliver(bool final_chunk) {
         if (!started_) {
             started_ = true;
             out_start_ = static_cast<double>(written_) / out_rate_;
+            if (catch_up_ > 1.0) {
+                // Marked as first audio once the device plays it; until then, the end of what
+                // may be sped up (set before any of it is queued).
+                starts_.push_back({utterance_, total_written_});
+                follow_playout();
+                first_audio_marked_ = true;
+            }
         }
         if (!ready_.empty()) {
             const std::size_t accepted = io_->playback->write(ready_);
@@ -172,6 +186,7 @@ void PlaybackStage::deliver(bool final_chunk) {
                 }
             }
             written_ += static_cast<std::int64_t>(accepted);
+            total_written_ += accepted;
             ready_.erase(ready_.begin(), ready_.begin() + static_cast<std::ptrdiff_t>(accepted));
         }
         break;
@@ -205,8 +220,48 @@ void PlaybackStage::finish_utterance() {
 void PlaybackStage::tick() {
     if (mode_ != Mode::Live) return;
     if (!ready_.empty()) deliver(utterance_final_);
+    if (catch_up_ > 1.0) follow_playout();
     if (ready_.empty() && io_->playback->queued() == 0) io_->playback_active.store(false);
     publish_backlog();  // the queue drains as it plays
+}
+
+void PlaybackStage::follow_playout() {
+    const std::uint64_t played = io_->playback->played();
+    while (!starts_.empty() && starts_.front().index < played) {
+        // Its first sample went to the device (played - index) samples ago, at speed 1: the
+        // device stops catching up before an utterance's start.
+        ctx_->services().telemetry->mark(
+            starts_.front().utterance, telemetry::Milestone::FirstAudio,
+            add_seconds(ctx_->now(), -static_cast<double>(played - starts_.front().index) / out_rate_));
+        playing_ = starts_.front().utterance;
+        starts_.pop_front();
+    }
+    const bool behind = !starts_.empty() || io_->speech_utterance.load(std::memory_order_relaxed) > playing_;
+    io_->playback->set_catch_up(behind ? catch_up_ : 1.0,
+                                starts_.empty() ? TimeCompressor::kNoLimit : starts_.front().index);
+}
+
+void PlaybackStage::await_first_audio() {
+    std::uint64_t played = io_->playback->played();
+    TimePoint moved = Clock::now();
+    while (!starts_.empty() && starts_.front().index < total_written_) {
+        follow_playout();
+        const std::uint64_t now_played = io_->playback->played();
+        if (now_played != played) {
+            played = now_played;
+            moved = Clock::now();
+        } else if (Clock::now() - moved > std::chrono::milliseconds(200)) {
+            break;  // the device has stopped playing
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    // Not played by the end: where each would have started, at speed 1. Never written: no audio.
+    for (const Start& s : starts_) {
+        if (s.index >= total_written_) continue;
+        ctx_->services().telemetry->mark(s.utterance, telemetry::Milestone::FirstAudio,
+                                         add_seconds(ctx_->now(), static_cast<double>(s.index - played) / out_rate_));
+    }
+    starts_.clear();
 }
 
 void PlaybackStage::close() {
@@ -215,6 +270,7 @@ void PlaybackStage::close() {
         if (!ready_.empty()) log::warn("playback: ", ready_.size(), " samples did not fit the output queue at shutdown");
     }
     if (utterance_final_) finish_utterance();
+    if (catch_up_ > 1.0) await_first_audio();
 }
 
 }  // namespace ee
