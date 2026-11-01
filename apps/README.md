@@ -146,6 +146,13 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
   pass keeps their prefix, which CTranslate2 reads in one step, and decodes only the rest word
   by word. Without drafts, the whole sentence is decoded word by word on the busy GPU.
 
+  A gentler version did not help either: skip a session's draft only while the batch is busy,
+  but never let its captions go a second without one. On mains power, 3 at once, 18 clients per
+  arm in 3 interleaved blocks: finals waited for the batch 46 ms p50 with it and 43 ms without,
+  end to end was 565 ms p50 against 549 ms, and the longest wait for a caption update grew from
+  780 to 1080 ms (median client). What finals wait for is mostly other sessions' finals:
+  `--log debug` prints each NLLB request's wait, batch and run time.
+
 The WebSocket protocol, on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate
 (sessions run at 16 kHz; the server resamples other rates):
 

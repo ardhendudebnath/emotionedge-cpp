@@ -21,6 +21,8 @@ struct TranslationRequest {
     /// Engines that stream (ITranslator::streams) stop decoding greedily once this many target
     /// words after the prefix are complete, and return them (partial). 0: translate it all.
     std::size_t stop_after_words = 0;
+    /// A caption draft rather than the final pass (for the engine's own accounting).
+    bool draft = false;
 };
 
 struct TranslationResult {

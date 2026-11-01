@@ -8,6 +8,7 @@
 #include <sentencepiece_processor.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <future>
 #include <memory>
@@ -69,14 +70,38 @@ std::vector<std::pair<std::uint16_t, std::uint16_t>> align_emphasis(const std::v
     return out;
 }
 
+/// Where a translation's time went, filled in by the batch that ran it.
+struct NllbTrace {
+    std::chrono::steady_clock::time_point started;
+    double run_ms = 0.0;
+    std::size_t batch = 0;
+    std::size_t drafts = 0;  ///< caption drafts in that batch
+    bool draft = false;
+    std::size_t tokens = 0;  ///< target tokens decoded, prefix included
+};
+
 /// One translation as the model takes it: source and target-prefix tokens, and the options that
 /// must match across a batch.
+/// Target tokens any translation may run to (a final's limit).
+constexpr std::size_t kMaxDecode = 256;
+
 struct NllbRequest {
     std::vector<std::string> source;
     std::vector<std::string> prefix;
     std::size_t beam = 2;
     bool attention = false;
+    std::size_t max_length = kMaxDecode;  ///< target tokens, prefix included
+    NllbTrace* trace = nullptr;           ///< the caller's, alive until its batch has run
 };
+
+/// A caption draft's decode limit. On FLORES-200 devtest NLLB's Hindi from English is at most
+/// 2 x the source pieces + 4; 3 x + 32 leaves room for denser source scripts. A draft past it has
+/// gone wrong (a repetition loop) and would hold every session's translation behind it; at
+/// worst a long draft's caption is cut short, and the final, which keeps kMaxDecode, is not.
+/// (A batch decodes to its longest member's limit: a draft batched with a final gets the final's.)
+std::size_t draft_limit(std::size_t prefix_tokens, std::size_t source_pieces) {
+    return std::min(kMaxDecode, prefix_tokens + 3 * source_pieces + 32);
+}
 
 /// NLLB and its SentencePiece model, loaded once per process for each model, device and setting:
 /// every session translates with it. Both are safe to use from several threads. Sessions that
@@ -94,13 +119,25 @@ std::vector<ctranslate2::TranslationResult> run_batch(ctranslate2::Translator& t
     std::vector<std::vector<std::string>> prefixes;
     ctranslate2::TranslationOptions options;
     options.beam_size = batch.front().beam;  // the batcher groups by beam size
-    options.max_decoding_length = 256;
+    options.max_decoding_length = 0;
+    std::size_t drafts = 0;
     for (NllbRequest& r : batch) {
         sources.push_back(std::move(r.source));
         prefixes.push_back(std::move(r.prefix));
         options.return_attention = options.return_attention || r.attention;
+        options.max_decoding_length = std::max(options.max_decoding_length, r.max_length);
+        if (r.trace != nullptr && r.trace->draft) ++drafts;
     }
-    return translator.translate_batch(sources, prefixes, options);
+    const auto started = std::chrono::steady_clock::now();
+    auto results = translator.translate_batch(sources, prefixes, options);
+    const double run_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    for (std::size_t i = 0; i < batch.size(); ++i) {
+        NllbTrace* t = batch[i].trace;
+        if (t == nullptr) continue;
+        const std::size_t tokens = results.at(i).hypotheses.empty() ? 0 : results[i].hypotheses[0].size();
+        *t = {started, run_ms, batch.size(), drafts, t->draft, tokens};
+    }
+    return results;
 }
 
 std::shared_ptr<NllbModel> load_nllb(const std::string& model_dir, const std::string& spm, ctranslate2::Device device,
@@ -239,7 +276,7 @@ public:
             std::size_t started = 0;
             ctranslate2::TranslationOptions options;
             options.beam_size = 1;
-            options.max_decoding_length = 256;
+            options.max_decoding_length = kMaxDecode;
             options.return_attention = want_attention;  // a stopped decode keeps it for what it produced
             options.callback = [&](ctranslate2::GenerationStepResult step) {
                 if (step.step < prefix.size()) return false;  // the forced prefix (and language) is reported too
@@ -271,13 +308,25 @@ public:
             return out;
         }
 
-        NllbRequest request{tokens, prefix, beam_, want_attention};
+        NllbTrace trace;
+        trace.draft = r.draft;
+        const std::size_t limit = r.draft ? draft_limit(prefix.size(), pieces.size()) : kMaxDecode;
+        NllbRequest request{tokens, prefix, beam_, want_attention, limit, &trace};
         ctranslate2::TranslationResult result;
+        const auto submitted = std::chrono::steady_clock::now();
         if (model_->batcher) {  // with whatever other sessions are translating
             result = model_->batcher->submit(std::move(request));
         } else {
             std::vector<NllbRequest> one{std::move(request)};
             result = std::move(run_batch(*model_->translator, one).at(0));
+        }
+        log::debug("translate: ", r.draft ? "draft" : "final", " waited ",
+                   std::chrono::duration<double, std::milli>(trace.started - submitted).count(), " ms, ran ", trace.run_ms,
+                   " ms in a batch of ", trace.batch, " (", trace.drafts, " draft(s)); ", trace.tokens, " of ", limit,
+                   " tokens");
+        if (trace.tokens + 1 >= limit) {
+            log::warn("translate: a ", r.draft ? "draft" : "final", " reached its decode limit (", limit,
+                      " tokens): it may be cut short, or the model looped");
         }
 
         const std::vector<std::string>& hyp = result.hypotheses.at(0);

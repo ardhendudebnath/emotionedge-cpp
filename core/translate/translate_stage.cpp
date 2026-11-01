@@ -211,6 +211,7 @@ void TranslateStage::translate_draft(const Frame& t) {
     request.source_language = t.language.empty() ? source_language_ : t.language;
     request.target_language = target_language_;
     request.target_prefix = committed_;
+    request.draft = true;
     const TranslationResult result = translator->translate(request);
     const Markup draft =
         parse_markup(glossary_.restore(remove_control_tokens(result.text), protected_text), target_language_);
