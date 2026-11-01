@@ -30,8 +30,10 @@ private:
     /// of the hangover, and is tentative: nothing it detects is kept unless it is used.
     [[nodiscard]] AsrResult transcribe(bool final, bool early = false);
     void emit_final(const AsrResult& result);
-    void emit_partial(const AsrResult& result);
-    void emit(const std::vector<Word>& words, std::uint32_t stable, bool final);
+    /// `quiet`: decoded after the final pass started early (speculate_ms of quiet): flags the
+    /// transcript frame_flags::kQuiet.
+    void emit_partial(const AsrResult& result, bool quiet);
+    void emit(const std::vector<Word>& words, std::uint32_t stable, bool final, bool quiet = false);
 
     StageContext* ctx_ = nullptr;
     HotSwap<IAsrEngine> engine_;

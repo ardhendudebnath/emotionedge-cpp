@@ -82,7 +82,8 @@ void StreamingAsrStage::process(Frame& f) {
     case SpeculationTracker::Event::None: break;
     }
     if (audio_.size() >= next_partial_at_) {
-        emit_partial(transcribe(false));
+        // Once the final pass has started early, the endpoint is likely near: the partial says so.
+        emit_partial(transcribe(false), speculation_.holds());
         while (next_partial_at_ <= audio_.size()) next_partial_at_ += partial_interval_;
     }
 }
@@ -117,23 +118,23 @@ void StreamingAsrStage::emit_final(const AsrResult& result) {
     emit(words, static_cast<std::uint32_t>(words.size()), true);
 }
 
-void StreamingAsrStage::emit_partial(const AsrResult& result) {
+void StreamingAsrStage::emit_partial(const AsrResult& result, bool quiet) {
     agreement_.update(result.words);
     const std::vector<Word> words = agreement_.current();
     const std::string text = join_words(words);
     if (text.empty() || text == last_partial_) return;  // nothing new to show
     last_partial_ = text;
-    emit(words, static_cast<std::uint32_t>(agreement_.committed().size()), false);
+    emit(words, static_cast<std::uint32_t>(agreement_.committed().size()), false, quiet);
 }
 
-void StreamingAsrStage::emit(const std::vector<Word>& words, std::uint32_t stable, bool final) {
+void StreamingAsrStage::emit(const std::vector<Word>& words, std::uint32_t stable, bool final, bool quiet) {
     Frame& out = ctx_->make(FrameKind::Transcript);
     out.utterance = utterance_;
     out.stream_pos = start_pos_;
     out.src_start = src_start_;
     out.src_end = src_end_;
     out.t_origin = origin_;
-    out.flags = final ? frame_flags::kFinal : 0u;
+    out.flags = (final ? frame_flags::kFinal : 0u) | (quiet ? frame_flags::kQuiet : 0u);
     out.words = words;
     out.text = join_words(words);
     out.stable_words = stable;

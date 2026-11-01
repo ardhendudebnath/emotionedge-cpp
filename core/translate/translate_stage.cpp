@@ -72,7 +72,10 @@ void TranslateStage::open(StageContext& ctx) {
 void TranslateStage::process(Frame& f) {
     if (f.kind == FrameKind::Utterance) {
         translate_final(f);
-    } else if (f.kind == FrameKind::Transcript && !f.is_final()) {
+    } else if (f.kind == FrameKind::Transcript && !f.is_final() && !f.has(frame_flags::kQuiet)) {
+        // A partial decoded after the ASR's final pass started early (the speaker quiet for
+        // speculate_ms) gets no draft: the final is likely within the endpoint hangover, and a
+        // draft in flight would hold it up.
         translate_draft(f);
     }
 }
@@ -211,6 +214,7 @@ void TranslateStage::translate_draft(const Frame& t) {
     request.source_language = t.language.empty() ? source_language_ : t.language;
     request.target_language = target_language_;
     request.target_prefix = committed_;
+    request.draft = true;
     const TranslationResult result = translator->translate(request);
     const Markup draft =
         parse_markup(glossary_.restore(remove_control_tokens(result.text), protected_text), target_language_);

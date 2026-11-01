@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <iterator>
 #include <filesystem>
 #include <fstream>
 
@@ -179,6 +180,12 @@ TEST(StreamingAsrStage, StartsTheFinalDecodeInTheHangover) {
     EXPECT_EQ(std::count_if(transcripts.begin(), transcripts.end(), [](const Frame& t) { return t.is_final(); }), 1);
     EXPECT_TRUE(transcripts.back().is_final());
     EXPECT_EQ(transcripts.back().text, "one two three four five six seven eight");
+    // A partial decoded after the early final pass began says so (no caption draft for it).
+    std::vector<Frame> partials;
+    std::copy_if(transcripts.begin(), transcripts.end(), std::back_inserter(partials), [](const Frame& t) { return !t.is_final(); });
+    ASSERT_GE(partials.size(), 2u);
+    EXPECT_FALSE(partials.front().has(frame_flags::kQuiet));
+    EXPECT_TRUE(partials.back().has(frame_flags::kQuiet));
     auto& metrics = ctx.telemetry().metrics();
     EXPECT_EQ(metrics.counter("ee_speculative_finals_kept_total", "", {{"stage", "asr"}}).value(), 1u);
     EXPECT_EQ(metrics.counter("ee_speculative_finals_wasted_total", "", {{"stage", "asr"}}).value(), 1u);
