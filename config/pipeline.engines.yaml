@@ -162,11 +162,6 @@ stages:
       # the CPU, each session gets a replica, and the replicas share the weights.
       # batch: auto           # auto | on | off
       # replicas: 1
-      # With batches, a session's caption draft gives way while other sessions' translations
-      # run or wait (busy_drafts: skip | queue), but captions refresh at least every
-      # draft_refresh_ms. No draft either once the speaker is quiet and the final is near.
-      # busy_drafts: skip
-      # draft_refresh_ms: 1000
       expressivity: ${config_dir}/expressivity.yaml
 
   - name: controller

@@ -49,8 +49,6 @@ inline constexpr std::uint32_t kClauseEnd = 1u << 5;    ///< last audio chunk of
 inline constexpr std::uint32_t kCalibration = 1u << 6;  ///< neutral reference render, not for playout
 /// Utterance audio in which the VAD heard no speech: the endpoint hangover may have begun.
 /// Stages can start their final pass early and keep it if no speech follows (speculate_ms).
-/// On a partial Transcript: decoded after the ASR started its final pass early, the speaker
-/// quiet for speculate_ms: the final is likely near.
 inline constexpr std::uint32_t kQuiet = 1u << 7;
 /// Translation, Speech: the first words of an utterance's final translation, sent ahead while
 /// the rest is decoded (translate `stream`). The final frame that follows starts with them.

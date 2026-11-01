@@ -19,7 +19,6 @@
 #include "core/runtime/log.hpp"
 #include "core/runtime/shared_cache.hpp"
 #include "core/translate/control_tokens.hpp"
-#include "core/translate/draft_gate.hpp"
 #include "core/translate/languages.hpp"
 #include "core/translate/translator.hpp"
 
@@ -224,14 +223,6 @@ public:
         const std::size_t max_batch = batching ? std::max<std::size_t>(replicas, 2) : 1;
         const std::size_t replica_count = batching ? 1 : replicas;
         streams_ = !batching && (stream == "on" || (stream == "auto" && !gpu_visible));
-        // busy_drafts: skip | queue. With batches across sessions, a caption draft is skipped
-        // while the batch executor is busy, unless this session's last draft is draft_refresh_ms
-        // old (queue: drafts always wait their turn, as before).
-        const std::string busy_drafts = params.str("busy_drafts", "skip");
-        if (busy_drafts != "skip" && busy_drafts != "queue") throw ConfigError("translate busy_drafts must be skip or queue");
-        const std::int64_t refresh = params.integer("draft_refresh_ms", 1000);
-        if (refresh < 0) throw ConfigError("translate draft_refresh_ms must be >= 0");
-        drafts_ = DraftGate(busy_drafts == "skip", std::chrono::milliseconds(refresh));
         static SharedCache<NllbModel> models;
         const std::string key = std::filesystem::weakly_canonical(model_dir).string() + '|' + spm + '|' +
                                 (gpu_visible ? "cuda" + std::to_string(gpu) : std::string("cpu")) + '|' + compute_type +
@@ -244,15 +235,6 @@ public:
     }
 
     TranslationResult translate(const TranslationRequest& r) override {
-        // Under multi-user load, caption drafts give way to finals (DraftGate).
-        if (r.draft && model_->batcher) {
-            const auto now = DraftGate::Clock::now();
-            if (!drafts_.allow(model_->batcher->busy(), now)) {
-                log::debug("translate: draft skipped, the batch is busy");
-                return {};
-            }
-            drafts_.ran(now);
-        }
         const auto src_code = nllb_code(r.source_language);
         const auto tgt_code = nllb_code(r.target_language);
         if (!src_code || !tgt_code) {
@@ -368,7 +350,6 @@ private:
     std::size_t beam_;
     bool control_tokens_;
     bool streams_ = false;
-    DraftGate drafts_;  ///< this session's caption drafts under load
 };
 
 }  // namespace

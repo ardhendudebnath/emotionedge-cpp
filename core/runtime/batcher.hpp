@@ -62,11 +62,6 @@ public:
         const std::lock_guard<std::mutex> lock(mu_);
         return pending_.size();
     }
-    /// A batch is running or requests wait for one: a new request would not start at once.
-    [[nodiscard]] bool busy() const {
-        const std::lock_guard<std::mutex> lock(mu_);
-        return running_ || !pending_.empty();
-    }
     /// Batches run so far, and the requests they held (requests / batches = mean batch size).
     [[nodiscard]] std::size_t batches() const {
         const std::lock_guard<std::mutex> lock(mu_);
@@ -103,7 +98,6 @@ private:
                 }
                 ++batches_;
                 requests_ += jobs.size();
-                running_ = true;
             }
             batch.clear();
             for (Job* j : jobs) batch.push_back(std::move(j->request));
@@ -115,8 +109,6 @@ private:
                 for (Job* j : jobs) j->promise.set_exception(std::current_exception());
             }
             jobs.clear();
-            const std::lock_guard<std::mutex> lock(mu_);
-            running_ = false;
         }
     }
 
@@ -126,7 +118,6 @@ private:
     mutable std::mutex mu_;
     std::condition_variable cv_;
     std::deque<Job*> pending_;
-    bool running_ = false;
     bool stop_ = false;
     std::size_t batches_ = 0;
     std::size_t requests_ = 0;

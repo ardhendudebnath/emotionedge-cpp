@@ -72,10 +72,7 @@ void TranslateStage::open(StageContext& ctx) {
 void TranslateStage::process(Frame& f) {
     if (f.kind == FrameKind::Utterance) {
         translate_final(f);
-    } else if (f.kind == FrameKind::Transcript && !f.is_final() && !f.has(frame_flags::kQuiet)) {
-        // A partial decoded after the ASR's final pass started early (the speaker quiet for
-        // speculate_ms) gets no draft: the final is likely within the endpoint hangover, and a
-        // draft in flight would hold it up.
+    } else if (f.kind == FrameKind::Transcript && !f.is_final()) {
         translate_draft(f);
     }
 }

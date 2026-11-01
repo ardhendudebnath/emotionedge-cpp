@@ -3,7 +3,6 @@
 #include <cstdlib>
 
 #include "core/translate/control_tokens.hpp"
-#include "core/translate/draft_gate.hpp"
 #include "core/translate/emphasis.hpp"
 #include "core/translate/glossary.hpp"
 #include "core/translate/languages.hpp"
@@ -243,45 +242,6 @@ TEST(Ct2Translator, StopsAfterTheLeadingWords) {
     EXPECT_EQ(head.alignment, all.alignment);
 }
 #endif
-
-// Under multi-user load a caption draft gives way while the shared translator is busy, but a
-// session's captions never stay frozen past draft_refresh_ms; busy_drafts: queue never skips.
-TEST(DraftGate, SkipsWhileBusyButRefreshesCaptions) {
-    using namespace std::chrono_literals;
-    const auto t0 = DraftGate::Clock::now();
-    DraftGate gate(true, 1000ms);
-    EXPECT_TRUE(gate.allow(false, t0));
-    EXPECT_TRUE(gate.allow(true, t0));  // no draft yet: as if long ago
-    gate.ran(t0);
-    EXPECT_TRUE(gate.allow(false, t0 + 100ms));
-    EXPECT_FALSE(gate.allow(true, t0 + 500ms));
-    EXPECT_TRUE(gate.allow(true, t0 + 1000ms));
-    DraftGate queue(false, 1000ms);
-    queue.ran(t0);
-    EXPECT_TRUE(queue.allow(true, t0 + 1ms));
-}
-
-// A partial decoded once the ASR's final pass has started early gets no draft: the final is near.
-TEST(TranslateStage, NoDraftOnceTheSpeakerWentQuiet) {
-    test::RecordingContext ctx;
-    ctx.mutable_pipeline().target_language = "hi";
-    ctx.mutable_params().set("wait_k", "1");
-    TranslateStage stage;
-    stage.open(ctx);
-    Frame t;
-    t.reset(FrameKind::Transcript);
-    t.utterance = 4;
-    t.language = "en";
-    for (const char* w : {"we", "should", "leave", "now"}) t.words.push_back({w, 0.0f, 0.0f, 1.0f});
-    t.stable_words = 2;
-    t.flags = frame_flags::kQuiet;
-    stage.process(t);
-    EXPECT_TRUE(ctx.of(FrameKind::Translation).empty());
-    t.flags = 0;
-    t.stable_words = 3;
-    stage.process(t);
-    EXPECT_EQ(ctx.of(FrameKind::Translation).size(), 1u);
-}
 
 TEST(TranslateStage, DraftsFollowWaitK) {
     test::RecordingContext ctx;

@@ -49,10 +49,8 @@ TEST(Batcher, RequestsThatArriveDuringABatchGoTogether) {
         8);
     std::vector<int> results(4, 0);
     std::vector<std::thread> sessions;
-    EXPECT_FALSE(b.busy());
     sessions.emplace_back([&] { results[0] = b.submit(0); });
     while (b.batches() == 0) std::this_thread::yield();  // the first request is running
-    EXPECT_TRUE(b.busy());  // a new request would wait (callers can skip optional work)
     for (int i = 1; i < 4; ++i) sessions.emplace_back([&, i] { results[i] = b.submit(i); });
     while (b.waiting() < 3) std::this_thread::yield();  // the others queue behind it
     {
@@ -61,7 +59,6 @@ TEST(Batcher, RequestsThatArriveDuringABatchGoTogether) {
     }
     cv.notify_all();
     for (std::thread& t : sessions) t.join();
-    while (b.busy()) std::this_thread::yield();  // idle once the last batch has delivered
 
     ASSERT_EQ(seen.size(), 2u);
     EXPECT_EQ(seen[0].size(), 1u);
