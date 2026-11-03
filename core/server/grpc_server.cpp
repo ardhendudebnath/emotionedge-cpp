@@ -75,6 +75,7 @@ public:
             x->set_text(e.value("text", ""));
             x->set_language(e.value("language", ""));
             add_words(e, "emphasis", x->mutable_emphasis());
+            x->set_truncated(e.value("truncated", false));
         } else if (type == "prosody") {
             pb::Prosody* x = m.mutable_prosody();
             x->set_utterance(utterance);

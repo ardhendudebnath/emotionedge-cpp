@@ -97,7 +97,7 @@ TranslationResult PhrasebookTranslator::translate(const TranslationRequest& requ
         const std::vector<std::string> words = split_words(source.plain, request.source_language);
         out.text = "[" + std::string(request.target_language) + "] " +
                    apply_emphasis_markup(words, source.emphasis, request.source_language);
-        return out;
+        return held(std::move(out), request, words.size());
     }
 
     const Entry& entry = it->second;
@@ -116,6 +116,21 @@ TranslationResult PhrasebookTranslator::translate(const TranslationRequest& requ
         }
     }
     out.text = apply_emphasis_markup(target_words, target_emphasis, request.target_language);
+    return held(std::move(out), request, source_words.size());
+}
+
+TranslationResult PhrasebookTranslator::held(TranslationResult out, const TranslationRequest& request,
+                                             std::size_t source_words) const {
+    std::vector<std::string> words = split_words(out.text, request.target_language);
+    out.limit = limits_.limit(request.draft, 1 + request.target_prefix.size(), source_words);
+    out.tokens = words.size() + 2;
+    if (out.tokens <= out.limit) return out;
+    words.resize(out.limit - 1);  // the language token and as many words as fit, no end token
+    out.text = join_text(words, request.target_language);
+    out.alignment.clear();
+    out.tokens = out.limit;
+    out.truncated = true;
+    out.retried = !request.draft && limits_.retry_penalty > 1.0f;
     return out;
 }
 

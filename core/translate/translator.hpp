@@ -31,6 +31,13 @@ struct TranslationResult {
     std::vector<std::pair<std::uint16_t, std::uint16_t>> alignment;
     /// Stopped at stop_after_words: `text` is the prefix plus that many complete words.
     bool partial = false;
+    /// Cut off at the decode limit (DecodeLimits) before the model ended it: `text` is short.
+    bool truncated = false;
+    /// A final first cut at its limit, then decoded again with a repetition penalty: `text` is
+    /// that decode (`truncated` if it was cut too).
+    bool retried = false;
+    std::size_t tokens = 0;  ///< target tokens decoded, prefix and end token included (engines that count them)
+    std::size_t limit = 0;   ///< the decode limit it ran under (0: none)
 };
 
 /// Machine-translation slot (blueprint 3.2: CTranslate2 running NLLB-200).
