@@ -32,7 +32,8 @@ import time
 import wave
 from pathlib import Path
 
-NLLB_LINE = re.compile(r"translate: (draft|final)( retry)? waited ([0-9.]+) ms, ran ([0-9.]+) ms in a batch of (\d+)")
+NLLB_LINE = re.compile(
+    r"translate: (draft|final)( retry)? waited ([0-9.]+) ms, ran ([0-9.]+) ms in a batch of (\d+) \((\d+) draft")
 
 
 def load_wav(path: Path) -> tuple[int, bytes]:
@@ -123,6 +124,8 @@ async def client(index: int, delay: float, rate: int, frames: bytes, url: str, t
     done = next((e for e in events if e["type"] == "done"), None)
     if done and done["session"].get("end_to_end", {}).get("count"):
         out["server_e2e"] = done["session"]["end_to_end"]
+    if done:  # the session's latency budget: p50 ms per stage row
+        out["budget_p50_ms"] = {r["row"]: r["p50_ms"] for r in done["session"].get("latency_budget", []) if r.get("count")}
     return out
 
 
@@ -185,15 +188,21 @@ def pct(values: list[float], p: float) -> float | None:
 
 
 def nllb_summary(log_text: str) -> dict:
-    rows: dict[str, list[tuple[float, float, int]]] = {"draft": [], "final": []}
+    """Per kind: wait and run percentiles, mean batch size and drafts per batch; and every request
+    in log order as [kind, waited ms, ran ms, batch size, drafts in the batch]."""
+    rows: dict[str, list[tuple[float, float, int, int]]] = {"draft": [], "final": []}
+    requests = []
     for m in NLLB_LINE.finditer(log_text):
-        rows[m.group(1)].append((float(m.group(3)), float(m.group(4)), int(m.group(5))))
-    out = {}
+        r = (float(m.group(3)), float(m.group(4)), int(m.group(5)), int(m.group(6)))
+        rows[m.group(1)].append(r)
+        requests.append([m.group(1), *r])
+    out: dict = {"requests": requests}
     for kind, r in rows.items():
         if r:
             out[kind] = {"n": len(r), "wait_p50_ms": pct([x[0] for x in r], 0.5), "wait_p95_ms": pct([x[0] for x in r], 0.95),
                          "run_p50_ms": pct([x[1] for x in r], 0.5), "run_p95_ms": pct([x[1] for x in r], 0.95),
-                         "mean_batch": round(statistics.fmean(x[2] for x in r), 2)}
+                         "mean_batch": round(statistics.fmean(x[2] for x in r), 2),
+                         "mean_drafts_in_batch": round(statistics.fmean(x[3] for x in r), 2)}
     return out
 
 
@@ -220,6 +229,11 @@ async def run_once(n: int, args, rate: int, frames: bytes) -> dict:
         row[key] = {"n": len(values), "p50": pct(values, 0.5), "p95": pct(values, 0.95)}
     e2e = [c["server_e2e"]["p50_ms"] for c in served if c["server_e2e"]]
     row["server_e2e_p50_ms_median_client"] = statistics.median(e2e) if e2e else None
+    stages: dict[str, list[float]] = {}
+    for c in served:
+        for name, ms in c.get("budget_p50_ms", {}).items():
+            stages.setdefault(name, []).append(ms)
+    row["stage_p50_ms_median_client"] = {k: round(statistics.median(v), 1) for k, v in stages.items()}
     if args.gpu:
         row["gpu"] = {"loaded_mib": loaded, **gpu}
     if args.server_log and args.server_log.exists():
@@ -267,6 +281,9 @@ async def main() -> int:
                   f"{fmt(row['caption_gap_ms']['p95']):>15s}  "
                   f"{fmt(nf.get('wait_p50_ms')):>15s}/{fmt(nf.get('wait_p95_ms')):<5s} {fmt(nf.get('run_p50_ms')):>7s}  "
                   f"{fmt(g.get('loaded_mib')):>10s}/{fmt(g.get('peak_mib')):<6s} {g.get('mean_util_pct', '-')}", flush=True)
+            if row["stage_p50_ms_median_client"]:
+                print("        stage p50 ms (median client): " + ", ".join(
+                    f"{k} {v:.0f}" for k, v in row["stage_p50_ms_median_client"].items()), flush=True)
             if args.json:
                 args.json.write_text(json.dumps(rows, indent=1) + "\n", encoding="utf-8")
             await asyncio.sleep(args.pause)
