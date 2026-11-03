@@ -152,6 +152,33 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
   end to end was 565 ms p50 against 549 ms, and the longest wait for a caption update grew from
   780 to 1080 ms (median client). What finals wait for is mostly other sessions' finals:
   `--log debug` prints each NLLB request's wait, batch and run time.
+- **How many sessions fit.** `bench/load_server.py` streams a WAV from N clients at once
+  (`--start sync`) or one every 700 ms (`--start stagger`). It reports what the clients saw, how
+  NLLB requests waited and ran (from a `--log debug` server log), and GPU memory (`--gpu`). On the
+  real engines (RTX 5070 Ti laptop GPU, 12 GB, on mains power), jfk.wav, a server with `--warm N
+  --max-sessions N` per row:
+
+  | Sessions | GPU memory, loaded / peak | First audio p50, sync / staggered | p95, sync | Utterances/s, sync |
+  |---|---|---|---|---|
+  | 1 | 3.0–3.5 / 3.5 GB | 330 / 318 ms | 352–403 ms | 0.30 |
+  | 3 | 4.7 / 4.9 GB | 586 / 420 ms | 698–818 ms | 0.87 |
+  | 8 | 7.5–8.0 / 8.8 GB | 1,170 / 1,692 ms | 1,200–1,432 ms | 2.2–2.3 |
+  | 10 | 9.3 / 11.3 GB | 1,442–1,642 / 2,642 ms | 1,818–1,858 ms | **2.75** |
+  | 12 | 10.2 / 11.9 GB | 3,158–5,062 / 3,900 ms | 5,614–6,102 ms | 2.4–2.7 |
+  | 14 | 11.9 / 11.9 GB | 6.5–24.7 s / 10.4 s | 9.9–28.9 s | 1.4–2.1 |
+  | 16 | 11.9 / 11.9 GB | 36.3–36.8 s / 9.2 s | 38.6–39.1 s | 1.3 |
+
+  - **Throughput peaks at 10 sessions.** Beyond that, peak GPU memory reaches the card's 12 GB.
+    From 14 on, every model slows at once (ASR final decode 10 s and emotion fusion 17 s p50 in
+    one run), as when the driver spills GPU memory into system memory. No allocation fails and
+    no client is refused: everyone gets slow.
+  - **What grows first**, per stage p50 at 8 synchronized sessions against one: emotion fusion
+    18 → 410 ms, TTS first chunk 55 → 225 ms, final translation 62 → 185 ms, ASR final decode 0 →
+    ~120 ms.
+  - **Staggered starts are slower than synchronized ones** from 8 sessions on. NLLB's batches are
+    small (1–3 requests instead of about 4), and they run while other sessions' models use the
+    GPU. NLLB was busy 13.9 s for the same 72 requests that took it 3.2 s synchronized. A final
+    waited up to 0.8 s behind them, and up to 2.6 s at 10 sessions.
 
 The WebSocket protocol, on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate
 (sessions run at 16 kHz; the server resamples other rates):
