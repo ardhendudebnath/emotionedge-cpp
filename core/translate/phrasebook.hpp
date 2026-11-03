@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/translate/decode_limits.hpp"
 #include "core/translate/translator.hpp"
 
 namespace ee {
@@ -37,13 +38,21 @@ public:
     [[nodiscard]] bool streams() const noexcept override { return streams_; }
     /// Honour stop_after_words (`stream: on`), to exercise streaming without a model.
     void set_streaming(bool on) noexcept { streams_ = on; }
+    /// Hold translations to decode limits as a decoder would, a word to a token (language token,
+    /// words, end token), to exercise them without a model. It cannot loop: a final cut at its
+    /// limit is "retried" (with a retry_penalty) to the same cut.
+    void set_limits(const DecodeLimits& limits) noexcept { limits_ = limits; }
 
     /// Lowercase, apostrophes unified, whitespace collapsed.
     [[nodiscard]] static std::string normalize(std::string_view text);
 
 private:
+    [[nodiscard]] TranslationResult held(TranslationResult out, const TranslationRequest& request,
+                                         std::size_t source_words) const;
+
     std::map<std::string, Entry, std::less<>> entries_;  // key: "<src>-<tgt>|<normalized source>"
     bool streams_ = false;
+    DecodeLimits limits_;
 };
 
 }  // namespace ee

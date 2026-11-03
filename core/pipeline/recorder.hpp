@@ -22,6 +22,7 @@ struct UtteranceRecord {
     Vad axis_confidence;
     std::string mt_input;
     std::string translation;
+    bool translation_truncated = false;  ///< cut at the MT decode limit (frame_flags::kTruncated)
     std::string target_language;
     std::vector<std::uint16_t> target_emphasis;
     ProsodyTargets prosody;
@@ -60,7 +61,8 @@ private:
 /// not publish. Each event has "type" and "utterance":
 ///   transcript   final, text, language, start, end, stable_words   (partial and final ASR)
 ///   emotion      label, valence, arousal, dominance, confidence, emphasis   (3.1)
-///   translation  final, text, language, emphasis                    (drafts and the final)
+///   translation  final, text, language, emphasis                    (drafts and the final;
+///                truncated: true when the decode was cut at its limit)
 ///   prosody      the controller's plan (4.1)
 ///   consistency  ecs, heard {label, valence, arousal, dominance}     (5.2, one per clause)
 ///   playout      start, end on the output timeline (5.1)

@@ -1,8 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <nlohmann/json.hpp>
+
 #include <cstdlib>
 
+#include "core/pipeline/recorder.hpp"
 #include "core/translate/control_tokens.hpp"
+#include "core/translate/decode_limits.hpp"
 #include "core/translate/emphasis.hpp"
 #include "core/translate/glossary.hpp"
 #include "core/translate/languages.hpp"
@@ -113,6 +117,110 @@ TEST(Phrasebook, TranslatesTheWalkthroughAndCarriesEmphasis) {
 
     req.source = "Something the phrasebook has never seen";
     EXPECT_EQ(book.translate(req).text, "[hi] Something the phrasebook has never seen");
+}
+
+// Limits in target tokens, the prefix and end token included; drafts held tighter than finals.
+TEST(DecodeLimits, ScaleWithTheSourceAndHoldDraftsTighter) {
+    const DecodeLimits d;
+    EXPECT_EQ(d.limit(false, 1, 10), 1u + 62u);  // 3 x 10 + 32
+    EXPECT_EQ(d.limit(true, 1, 10), 1u + 49u);   // 2.5 x 10 + 24
+    EXPECT_EQ(d.limit(true, 3, 11), 3u + 52u);   // ceil(27.5 + 24): kept words add to the prefix
+    EXPECT_LT(d.limit(true, 1, 40), d.limit(false, 1, 40));
+
+    Params p;
+    p.set("final_ratio", "2");
+    p.set("final_margin", "0");
+    p.set("retry_penalty", "1");
+    const DecodeLimits q = DecodeLimits::from(p);
+    EXPECT_EQ(q.limit(false, 1, 5), 11u);
+    EXPECT_EQ(q.limit(true, 1, 5), d.limit(true, 1, 5));
+    EXPECT_FLOAT_EQ(q.retry_penalty, 1.0f);
+    p.set("draft_ratio", "0");
+    EXPECT_THROW((void)DecodeLimits::from(p), ConfigError);
+    Params r;
+    r.set("retry_penalty", "0.9");
+    EXPECT_THROW((void)DecodeLimits::from(r), ConfigError);
+}
+
+TEST(Phrasebook, HoldsTranslationsToTheDecodeLimit) {
+    PhrasebookTranslator book;  // pseudo-translations: "[hi]" and the source words
+    DecodeLimits tight;
+    tight.final_ratio = 1.0f;
+    tight.final_margin = 0.0f;
+    book.set_limits(tight);
+    TranslationRequest req;
+    req.source = "we should leave now";  // language token, 5 words, end token: 7 > 1 + 4
+    req.source_language = "en";
+    req.target_language = "hi";
+    TranslationResult r = book.translate(req);
+    EXPECT_TRUE(r.truncated);
+    EXPECT_TRUE(r.retried);  // as an engine that retries would report it: cut again
+    EXPECT_EQ(r.limit, 5u);
+    EXPECT_EQ(r.tokens, 5u);
+    EXPECT_EQ(r.text, "[hi] we should leave");
+
+    req.draft = true;  // drafts keep the default limit, 1 + ceil(2.5 x 4 + 24)
+    r = book.translate(req);
+    EXPECT_FALSE(r.truncated);
+    EXPECT_FALSE(r.retried);
+    EXPECT_EQ(r.limit, 35u);
+    EXPECT_EQ(r.tokens, 7u);
+    EXPECT_EQ(r.text, "[hi] we should leave now");
+}
+
+// A decode cut at its limit is never silent. A cut draft is dropped: its words would be committed,
+// and the final pass keeps committed words. A cut final goes out flagged, to captions and the
+// session export. Both are counted by pass, source language and outcome.
+TEST(TranslateStage, ReportsDecodesCutAtTheLimit) {
+    test::RecordingContext ctx;
+    ctx.mutable_pipeline().target_language = "hi";
+    ctx.mutable_params().set("wait_k", "1");
+    ctx.mutable_params().set("draft_ratio", "0.5");
+    ctx.mutable_params().set("draft_margin", "0");
+    ctx.mutable_params().set("final_ratio", "0.5");
+    ctx.mutable_params().set("final_margin", "0");
+    ctx.telemetry().begin_utterance(4);
+    TranslateStage stage;
+    stage.open(ctx);  // no phrasebook: pseudo-translations, held to these limits
+    const auto cuts = [&](const char* pass, const char* outcome) {
+        return ctx.telemetry()
+            .metrics()
+            .counter("ee_translate_truncated_total", "", {{"pass", pass}, {"language", "en"}, {"outcome", outcome}})
+            .value();
+    };
+
+    Frame t;
+    t.reset(FrameKind::Transcript);
+    t.utterance = 4;
+    t.language = "en";
+    for (const char* w : {"we", "should", "leave", "now"}) t.words.push_back({w, 0.0f, 0.0f, 1.0f});
+    t.stable_words = 3;
+    stage.process(t);
+    EXPECT_TRUE(ctx.of(FrameKind::Translation).empty());
+    EXPECT_EQ(cuts("draft", "dropped"), 1u);
+
+    Frame u;
+    u.reset(FrameKind::Utterance);
+    u.utterance = 4;
+    u.flags = frame_flags::kFinal;
+    u.language = "en";
+    u.text = "we should leave now";
+    u.words = t.words;
+    stage.process(u);
+    const auto out = ctx.of(FrameKind::Translation);
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_TRUE(out[0].is_final());
+    EXPECT_TRUE(out[0].has(frame_flags::kTruncated));
+    EXPECT_EQ(out[0].text, "[hi] we");  // 1 + ceil(0.5 x 4) tokens: the language token and two words
+    EXPECT_EQ(cuts("final", "cut"), 1u);
+
+    const nlohmann::json event = nlohmann::json::parse(event_json(out[0]));
+    EXPECT_EQ(event.value("truncated", false), true);
+    UtteranceRecord record;
+    record.translation = out[0].text;
+    record.translation_truncated = true;
+    const nlohmann::json session = nlohmann::json::parse(to_session_json({record}, ctx.pipeline(), nullptr));
+    EXPECT_EQ(session["utterances"][0]["translation"].value("truncated", false), true);
 }
 
 TEST(TranslateStage, EmitsTheBlueprintWalkthrough) {
@@ -240,6 +348,77 @@ TEST(Ct2Translator, StopsAfterTheLeadingWords) {
     const TranslationResult head = mt->translate(e);
     EXPECT_TRUE(head.partial);
     EXPECT_EQ(head.alignment, all.alignment);
+}
+
+// Decode limits on the real NLLB: translations from several scripts end well inside them, and a
+// decode held below its length is cut, reported, and (a final) retried, batched or streamed.
+TEST(Ct2Translator, ReportsDecodesCutAtTheLimit) {
+    const char* dir = std::getenv("EE_NLLB_MODEL_DIR");
+    if (dir == nullptr) GTEST_SKIP() << "set EE_NLLB_MODEL_DIR to run";
+    Params p;
+    p.set("device", "cpu");
+    p.set("control_tokens", "on");
+    p.set("warmup", "false");
+    const auto mt = make_ct2_translator(dir, p);
+    const std::pair<const char*, const char*> sources[] = {
+        {"en", "The weather is lovely today, so we are going to the beach."},
+        {"es", "Hace un tiempo precioso hoy, así que vamos a la playa."},
+        {"de", "Das Wetter ist heute herrlich, also fahren wir an den Strand."},
+        {"ru", "Сегодня прекрасная погода, поэтому мы едем на пляж."},
+        {"zh", "今天天气很好，所以我们去海边。"},
+        {"ja", "今日はいい天気なので、海に行きます。"},
+        {"ko", "오늘은 날씨가 좋아서 해변에 갑니다."},
+        {"ar", "الطقس جميل اليوم، لذلك سنذهب إلى الشاطئ."},
+    };
+    for (const auto& [language, text] : sources) {
+        TranslationRequest r;
+        const std::string source = std::string("<emo=neutral a=0.0 reg=casual> ") + text;
+        r.source = source;
+        r.source_language = language;
+        r.target_language = "hi";
+        for (const bool draft : {false, true}) {
+            r.draft = draft;
+            const TranslationResult t = mt->translate(r);
+            EXPECT_FALSE(t.truncated) << language << (draft ? " draft" : " final");
+            EXPECT_FALSE(t.retried) << language;
+            EXPECT_GT(t.tokens, 2u) << language;
+            EXPECT_LE(t.tokens, t.limit) << language;
+            EXPECT_FALSE(t.text.empty()) << language;
+        }
+    }
+
+    TranslationRequest r;
+    r.source = "<emo=neutral a=0.0 reg=casual> And so, my fellow Americans, ask not what your country can do for you.";
+    r.source_language = "en";
+    r.target_language = "hi";
+    Params tight = p;
+    tight.set("final_ratio", "0.25");
+    tight.set("final_margin", "0");
+    tight.set("draft_ratio", "0.25");
+    tight.set("draft_margin", "0");
+    const auto cut = make_ct2_translator(dir, tight);
+    const TranslationResult final_cut = cut->translate(r);
+    EXPECT_TRUE(final_cut.truncated);
+    EXPECT_TRUE(final_cut.retried);  // the retry is held to the same limit: cut too
+    EXPECT_EQ(final_cut.tokens, final_cut.limit);
+    EXPECT_FALSE(final_cut.text.empty());
+    r.draft = true;
+    const TranslationResult draft_cut = cut->translate(r);
+    EXPECT_TRUE(draft_cut.truncated);
+    EXPECT_FALSE(draft_cut.retried);  // drafts are not retried: the stage drops them
+    EXPECT_EQ(draft_cut.tokens, draft_cut.limit);
+
+    // The streaming final pass: a greedy decode cut before its leading words are complete.
+    tight.set("stream", "on");
+    tight.set("beam", "1");
+    const auto streamed = make_ct2_translator(dir, tight);
+    ASSERT_TRUE(streamed->streams());
+    r.draft = false;
+    r.stop_after_words = 40;
+    const TranslationResult lead = streamed->translate(r);
+    EXPECT_FALSE(lead.partial);
+    EXPECT_TRUE(lead.truncated);
+    EXPECT_TRUE(lead.retried);
 }
 #endif
 

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/prosody/expressivity.hpp"
@@ -26,6 +27,9 @@ namespace ee {
 /// greedily up to `stream_words` words (at least one past a committed draft prefix) and sends
 /// them ahead (frame_flags::kLeading), with their emphasis as the engine aligned it, so speech
 /// can start on them; it then translates the rest with them as its prefix.
+///
+/// Decode limits (DecodeLimits): a final whose decode was cut at its limit, retry included, goes
+/// out flagged frame_flags::kTruncated; a cut draft is dropped, so its words are not committed.
 class TranslateStage final : public IStage {
 public:
     void open(StageContext& ctx) override;
@@ -39,6 +43,10 @@ private:
     /// with the indices of those emphasized.
     void emit_leading(const Frame& utterance, const std::vector<std::string>& words, std::vector<std::uint16_t> emphasis,
                       const std::string& input, const Glossary::Protected& protected_text, std::size_t source_words);
+    /// A decode that reached its limit (DecodeLimits): counted by pass, source language and
+    /// outcome (`ee_translate_truncated_total`) and logged. Nothing for one that ended.
+    void report_cut(const Frame& frame, const TranslationResult& result, bool draft, std::string_view language,
+                    std::size_t source_words);
     /// The exact string sent to the engine: control prefix (if used) + source with markup and
     /// glossary placeholders.
     [[nodiscard]] std::string prepare_input(const std::string& marked, const ControlTokens& tokens,

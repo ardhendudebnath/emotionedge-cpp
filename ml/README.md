@@ -141,6 +141,10 @@ no leaks on either.
 56.27 / 30.84 on the CPU, and the fast CPU profile's streaming final pass (`--stream-words 5`:
 five words greedily, then the rest at beam 2 after them) 56.55 / 31.27.
 
+`eval/decode_limits.py` sets the runtime's decode limits. It measures how long translations into
+Hindi run from each of the 44 source languages the runtime maps, finds the repetition loops,
+and shows what each candidate limit would cut (README, "Decode limits").
+
 ## Emotion out: Kokoro style offsets (P2/P3)
 
 Kokoro-82M reads everything in a neutral style. emotion2vec+ heard Piper, plain Kokoro and
