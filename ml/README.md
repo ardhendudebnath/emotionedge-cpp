@@ -130,7 +130,7 @@ What the numbers show:
 - **Emotion signal:** round-trip agreement moves by 1.2 points on 600 items, which is within
   noise. The teacher never saw the emotion, so the tokens can carry little signal yet.
 - **What would carry it:** emotionally faithful references, from human or LLM rewrites per
-  emotion, as a phase-4 dataset.
+  emotion, as a phase-4 dataset. A local 8B LLM fell short (below).
 
 `eval_mt.py` scores CTranslate2 on CUDA with INT8/FP16 when a GPU is present, as above; that is
 the runtime's `gpu_compute_type`. `--device cpu --compute-type int8` scores the CPU runtime.
@@ -144,6 +144,42 @@ five words greedily, then the rest at beam 2 after them) 56.55 / 31.27.
 `eval/decode_limits.py` sets the runtime's decode limits. It measures how long translations into
 Hindi run from each of the 44 source languages the runtime maps, finds the repetition loops,
 and shows what each candidate limit would cut (README, "Decode limits").
+
+### LLM rewrites as emotion-faithful targets (P4, negative)
+
+The teacher above never sees the emotion. The next step was Hindi targets from an LLM told each
+item's emotion, arousal and register, run locally (no paid API):
+
+```bash
+llama-server -m Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf -ngl 99 -c 16384 -np 8 --port 8090 &
+python ml/data/llm_translate.py --corpus data/mt_corpus.hi.jsonl --out pilot.jsonl --split valid --limit 300 \
+    [--mode postedit --field tgt_pe]
+python ml/eval/eval_mt_targets.py --corpus pilot.jsonl --fields tgt tgt_llm tgt_pe \
+    --backtranslate models/mt/nllb-200-distilled-600M-int8
+```
+
+`eval_mt_targets.py` back-translates each set of targets to English with vanilla NLLB-600M. It
+scores meaning (round-trip chrF against the English source) and emotion (DistilRoBERTa's label
+on the round trip, against its label on the source and against the item's own label). The gate,
+set beforehand: emotion agreement up, meaning held. Llama 3.1 8B Instruct (Q4_K_M) on the
+RTX 5070 Ti, 297 held-out items, about 7 items/s:
+
+| Targets | Round-trip chrF | Agreement with the source | … with the label | Text ECS |
+|---|---|---|---|---|
+| **NLLB-1.3B teacher** | **62.2** | **0.754** | **0.478** | **0.942** |
+| LLM, first prompt (listed Hindi particles as examples) | 44.2 | 0.620 | 0.441 | 0.915 |
+| LLM, strict prompt (add nothing) | 47.2 | 0.680 | 0.424 | 0.921 |
+| LLM post-editing the teacher's Hindi | 52.6 | 0.660 | 0.444 | 0.920 |
+
+The gate failed, so no corpus was generated.
+- **First prompt:** "अरे" went into 75 of 300 lines, calm and neutral ones too ("Hm-mmm" →
+  "अरे...").
+- **Strict prompt:** it cut that to 13, but the translations still drift from the meaning.
+- **Post-editing:** told to make the smallest change, it changed 276 of 300 lines, dropped
+  content ("यहाँ!" → "यहीं") and mixed scripts.
+- **Caveat:** the round trip goes back through NLLB, which may favour literal Hindi, and the
+  classifier reads English. Emotion carried in Hindi that the round trip loses would not count.
+- **What is still open:** a stronger model, or references written or judged by Hindi speakers.
 
 ## Emotion out: Kokoro style offsets (P2/P3)
 
