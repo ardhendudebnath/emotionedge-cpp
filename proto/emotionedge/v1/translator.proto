@@ -90,6 +90,7 @@ message Translation {
   string text = 3;
   string language = 4;
   repeated string emphasis = 5;  // the emphasized words, carried into the target
+  bool truncated = 6;  // a final whose decode was cut at its length limit: the text may be short
 }
 
 // The emotion controller's plan for the synthesized speech (4.1), relative to neutral.

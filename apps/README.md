@@ -161,7 +161,7 @@ The WebSocket protocol, on `ws://HOST:PORT/?rate=16000`, where `rate` is the cli
 | client → server | binary | mono 16-bit little-endian PCM at `rate` |
 | client → server | text | `{"type": "end"}`: no more speech; finish, play out, then `done` |
 | server → client | text | `{"type": "ready", input_rate, output_rate, source_language, target_language}` once the models are loaded. Audio sent earlier is buffered, up to 30 s |
-| server → client | text | one event per result, each with `type` and `utterance`: `transcript` (partial and final), `emotion` (V·A·D, label, confidence, emphasis), `translation` (drafts and the final), `prosody` (the controller's plan), `consistency` (ECS and what 5.2 heard, per clause), `playout` |
+| server → client | text | one event per result, each with `type` and `utterance`: `transcript` (partial and final), `emotion` (V·A·D, label, confidence, emphasis), `translation` (drafts and the final; `truncated: true` on a final cut at its decode limit), `prosody` (the controller's plan), `consistency` (ECS and what 5.2 heard, per clause), `playout` |
 | server → client | text | `{"type": "done", "session": {...}}`: the session export, after the last audio. Or `{"type": "error", message}` |
 | server → client | binary | the translated speech: mono 16-bit little-endian PCM at `output_rate` (24 kHz), in 10 ms blocks. Silence is not sent |
 

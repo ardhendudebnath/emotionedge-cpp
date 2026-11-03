@@ -62,6 +62,7 @@ void RecorderStage::process(Frame& f) {
             UtteranceRecord& r = record(f.utterance);
             r.mt_input = f.detail;
             r.translation = f.text;
+            r.translation_truncated = (f.flags & frame_flags::kTruncated) != 0;
             r.target_language = f.language;
             r.target_emphasis = f.emphasis;
             r.emotion = f.emotion;
@@ -171,6 +172,7 @@ std::string event_json(const Frame& f) {
     case FrameKind::Translation:
         e = {{"type", "translation"}, {"final", f.is_final()}, {"text", f.text}, {"language", f.language},
              {"emphasis", emphasized_words(split_words(f.text, f.language), f.emphasis)}};
+        if ((f.flags & frame_flags::kTruncated) != 0) e["truncated"] = true;
         break;
     case FrameKind::Speech:
         e = {{"type", "prosody"},          {"pitch_pct", f.prosody.pitch_pct}, {"range_pct", f.prosody.range_pct},
@@ -231,6 +233,7 @@ std::string to_session_json(const std::vector<UtteranceRecord>& records, const P
         u["mt_input"] = r.mt_input;
         u["translation"] = {{"text", r.translation}, {"language", r.target_language},
                             {"emphasis", emphasized_words(target_words, r.target_emphasis)}};
+        if (r.translation_truncated) u["translation"]["truncated"] = true;
         u["prosody"] = {{"pitch_pct", r.prosody.pitch_pct}, {"range_pct", r.prosody.range_pct},
                         {"rate_pct", r.prosody.rate_pct},   {"energy_db", r.prosody.energy_db},
                         {"pause_ms", r.prosody.pause_ms},   {"accent", r.prosody.accent},

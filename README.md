@@ -274,6 +274,61 @@ decode returns NLLB's attention for the words it has.
   fell back to word position, often wrong across English and Hindi word order. NLLB now places
   it by attention, as the adapter was built to; RAVDESS transfer is unchanged.
 
+**Decode limits** (`translate.final_ratio`/`final_margin`, `draft_ratio`/`draft_margin`,
+`retry_penalty`). A final translation may decode up to 3 × its source's pieces + 32 tokens, a
+caption draft 2.5 × + 24, after its target prefix. Before, finals stopped silently at 256 tokens.
+A decode that reaches its limit without ending is never silent:
+- **A final** is decoded once more with a repetition penalty of 1.2. If that is cut too, it goes
+  out flagged `truncated`, in the live `translation` event, the gRPC `Translation` and the session
+  export.
+- **A draft** is dropped, so its words never become the prefix the final pass keeps.
+- **Every cut** is counted in `ee_translate_truncated_total{pass, language, outcome}` (`recovered`,
+  `cut`, `dropped`) and logged with the utterance, source language and token counts.
+- **In a batch**, which decodes to its longest member's limit, each result is held to its own, so
+  it does not depend on what it was batched with.
+
+Measured on all 1,012 FLORES-200 devtest sentences from each of the 44 source languages the
+runtime maps into Hindi, decoded as the runtime decodes them (emotion LoRA, neutral prefix, beam
+2, INT8/FP16 on the GPU) with no cap below 1,024 tokens. Drafts are each sentence's first half
+(`ml/eval/decode_limits.py`).
+
+| | Finals | Drafts |
+|---|---|---|
+| Decodes | 44,528 | 44,528 |
+| Repetition loops (under half their 4-grams distinct, or no end by 1,024) | 22, 10 never ending | 12, 2 never ending |
+| Every other decode: output / source pieces, p99 and max | 1.47, 2.0 | 1.67, 2.62 |
+| Cut by the limit | 17, all loops | 10, all loops |
+| Room left for the closest other decode | 42 tokens | 21 tokens |
+
+- **What the limits cut** were loops: finals in 15 languages, drafts in 8, 19 languages in all.
+  English has one: "आग को बुझाते हुए" repeated for a sentence about firefighters.
+- **All 17 cut finals ended on the retry**, as whole sentences. One still reads wrongly in places
+  (a Chinese sentence about the Latin word "civilis"), where before it repeated "लातिन" to the
+  cap.
+- **Not caught:** 5 final loops and 2 draft loops end on their own under the limit. Catching
+  those needs a repetition check, not a length limit.
+- **Translation quality** goes up slightly wherever a final was cut, since only the cut sentences
+  change. FLORES-200 devtest into Hindi, before (finals capped at 256 tokens) and after, in the
+  same batches. The other 29 languages have no final cut, so nothing changes there:
+
+  | From | Finals cut | chrF | BLEU |
+  |---|---|---|---|
+  | English | 1 | 56.70 → 56.74 | 31.35 → 31.36 |
+  | German | 1 | 47.93 → 48.00 | 21.36 → 21.38 |
+  | Russian | 1 | 44.94 → 44.98 | 18.20 → 18.21 |
+  | Chinese | 1 | 41.44 → 41.51 | 15.59 → 15.63 |
+  | Korean | 2 | 42.22 → 42.40 | 15.59 → 15.65 |
+  | Bengali | 2 | 47.47 → 47.57 | 20.71 → 20.75 |
+  | Vietnamese | 1 | 43.90 → 43.93 | 18.20 → 18.20 |
+  | Dutch | 1 | 43.34 → 43.39 | 16.51 → 16.52 |
+  | Persian | 1 | 45.83 → 45.88 | 19.81 → 19.82 |
+  | Swahili | 1 | 45.68 → 45.74 | 20.96 → 20.97 |
+  | Czech | 1 | 45.93 → 45.96 | 19.81 → 19.81 |
+  | Hungarian | 1 | 44.30 → 44.33 | 18.05 → 18.05 |
+  | Danish | 1 | 48.68 → 48.73 | 22.38 → 22.38 |
+  | Khmer | 1 | 40.83 → 40.89 | 15.62 → 15.60 |
+  | Lao | 1 | 42.63 → 42.70 | 17.15 → 17.16 |
+
 **Speaker-aware barge-in** (phase 4) lets a listener interrupt the translation, while the
 interpreted speaker can talk on over it. When speech starts while the translation plays, the
 speaker stage embeds its first 1.5 s with ECAPA-TDNN and judges it with a `VoiceGate`:

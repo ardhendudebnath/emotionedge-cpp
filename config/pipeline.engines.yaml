@@ -162,6 +162,16 @@ stages:
       # the CPU, each session gets a replica, and the replicas share the weights.
       # batch: auto           # auto | on | off
       # replicas: 1
+      # Decode limits, in target tokens per source token (+ margin), as measured from all 44
+      # source languages into Hindi (README, "Decode limits"). Only repetition loops ran past
+      # them. A final cut at its limit is decoded once more with retry_penalty (1: not) and is
+      # flagged `truncated` if that is cut too; a cut draft is dropped. Both are counted in
+      # ee_translate_truncated_total{pass,language,outcome}.
+      # final_ratio: 3.0
+      # final_margin: 32
+      # draft_ratio: 2.5
+      # draft_margin: 24
+      # retry_penalty: 1.2
       expressivity: ${config_dir}/expressivity.yaml
 
   - name: controller

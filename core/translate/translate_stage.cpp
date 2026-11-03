@@ -6,6 +6,7 @@
 
 #include "core/runtime/log.hpp"
 #include "core/telemetry/telemetry.hpp"
+#include "core/translate/decode_limits.hpp"
 #include "core/translate/emphasis.hpp"
 #include "core/translate/languages.hpp"
 #include "core/translate/phrasebook.hpp"
@@ -19,6 +20,7 @@ std::unique_ptr<ITranslator> make_translator(const Params& params, const ModelRe
         // pseudo-translations only without a phrasebook
         auto book = std::make_unique<PhrasebookTranslator>(path.empty() ? PhrasebookTranslator() : PhrasebookTranslator::load(path));
         book->set_streaming(params.str("stream", "off") == "on");
+        book->set_limits(DecodeLimits::from(params));
         return book;
     }
     if (kind == "ct2") {
@@ -133,6 +135,7 @@ void TranslateStage::translate_final(const Frame& u) {
         }
     }
     const TranslationResult result = done ? std::move(*done) : translator->translate(request);
+    report_cut(u, result, false, request.source_language, source_words.size());
 
     std::uint32_t missing = 0;
     const std::string restored = glossary_.restore(remove_control_tokens(result.text), protected_text, &missing);
@@ -145,7 +148,7 @@ void TranslateStage::translate_final(const Frame& u) {
 
     Frame& out = ctx_->make(FrameKind::Translation);
     out.copy_header_from(u);
-    out.flags = frame_flags::kFinal;
+    out.flags = frame_flags::kFinal | (result.truncated ? frame_flags::kTruncated : 0u);
     out.text = target.plain;
     out.language = target_language_;
     out.detail = input;
@@ -159,6 +162,26 @@ void TranslateStage::translate_final(const Frame& u) {
     draft_utterance_ = 0;
     committed_.clear();
     last_stable_ = 0;
+}
+
+void TranslateStage::report_cut(const Frame& f, const TranslationResult& result, bool draft, std::string_view language,
+                                std::size_t source_words) {
+    if (!result.truncated && !result.retried) return;
+    const char* outcome = !result.truncated ? "recovered" : draft ? "dropped" : "cut";
+    ctx_->services()
+        .telemetry->metrics()
+        .counter("ee_translate_truncated_total", "Translations whose decode reached its limit (DecodeLimits)",
+                 {{"pass", draft ? "draft" : "final"}, {"language", std::string(language)}, {"outcome", outcome}})
+        .inc();
+    if (!result.truncated) {
+        log::warn("translate: utterance ", f.utterance, "'s final (", language, ", ", source_words,
+                  " source words) was cut at its limit of ", result.limit,
+                  " tokens; a retry with a repetition penalty ended it in ", result.tokens);
+        return;
+    }
+    log::warn("translate: utterance ", f.utterance, "'s ", draft ? "draft" : "final", " (", language, ", ", source_words,
+              " source words) was cut at its limit of ", result.limit, " tokens", result.retried ? ", and so was its retry" : "",
+              draft ? "; dropped" : "; sent short, flagged truncated");
 }
 
 void TranslateStage::emit_leading(const Frame& u, const std::vector<std::string>& words,
@@ -213,6 +236,10 @@ void TranslateStage::translate_draft(const Frame& t) {
     request.target_prefix = committed_;
     request.draft = true;
     const TranslationResult result = translator->translate(request);
+    if (result.truncated) {  // most likely a loop: its words must not be committed
+        report_cut(t, result, true, request.source_language, source_words.size());
+        return;
+    }
     const Markup draft =
         parse_markup(glossary_.restore(remove_control_tokens(result.text), protected_text), target_language_);
     if (wait_k_.extend(committed_, split_words(draft.plain, target_language_), stable) == 0) return;

@@ -141,6 +141,10 @@ no leaks on either.
 56.27 / 30.84 on the CPU, and the fast CPU profile's streaming final pass (`--stream-words 5`:
 five words greedily, then the rest at beam 2 after them) 56.55 / 31.27.
 
+`eval/decode_limits.py` sets the runtime's decode limits. It measures how long translations into
+Hindi run from each of the 44 source languages the runtime maps, finds the repetition loops,
+and shows what each candidate limit would cut (README, "Decode limits").
+
 ### LLM rewrites as emotion-faithful targets (P4, negative)
 
 The teacher above never sees the emotion. The next step was Hindi targets from an LLM told each

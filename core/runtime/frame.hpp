@@ -53,6 +53,8 @@ inline constexpr std::uint32_t kQuiet = 1u << 7;
 /// Translation, Speech: the first words of an utterance's final translation, sent ahead while
 /// the rest is decoded (translate `stream`). The final frame that follows starts with them.
 inline constexpr std::uint32_t kLeading = 1u << 8;
+/// Translation: the decode was cut at its limit (DecodeLimits), so the text may be short.
+inline constexpr std::uint32_t kTruncated = 1u << 9;
 }  // namespace frame_flags
 
 /// The unit of data exchanged between stages (blueprint p.4: `IStage::process(Frame&)`).
