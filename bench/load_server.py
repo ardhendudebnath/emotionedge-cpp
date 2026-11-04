@@ -15,9 +15,11 @@ apps/web/stream_wav.py does:
 - caption gap: the longest wait between an utterance's caption updates (drafts, then the final);
 - the server's own end to end (from the session export), and whether it was refused.
 Per N and round: p50/p95 over every client's utterances, utterances translated per second while
-the clients ran and, with --server-log (a `serve --log debug` log), how long NLLB requests waited
-for their batch and ran, from the lines logged during that run. With --gpu, peak GPU memory and
-mean utilization while it ran, and GPU memory just before (nvidia-smi).
+the clients ran, per-stage latency (median client) and each stage's busy time summed over every
+session (its process() calls: a per-model profile under load). With --server-log (a
+`serve --log debug` log), how long NLLB requests waited for their batch and ran, from the lines
+logged during that run. With --gpu, peak GPU memory and mean utilization while it ran, and GPU
+memory just before (nvidia-smi).
 Requires `pip install websockets`.
 """
 from __future__ import annotations
@@ -124,8 +126,9 @@ async def client(index: int, delay: float, rate: int, frames: bytes, url: str, t
     done = next((e for e in events if e["type"] == "done"), None)
     if done and done["session"].get("end_to_end", {}).get("count"):
         out["server_e2e"] = done["session"]["end_to_end"]
-    if done:  # the session's latency budget: p50 ms per stage row
+    if done:  # the session's latency budget (p50 ms per row) and each stage's busy time
         out["budget_p50_ms"] = {r["row"]: r["p50_ms"] for r in done["session"].get("latency_budget", []) if r.get("count")}
+        out["stage_time"] = done["session"].get("stage_time", {})
     return out
 
 
@@ -234,6 +237,14 @@ async def run_once(n: int, args, rate: int, frames: bytes) -> dict:
         for name, ms in c.get("budget_p50_ms", {}).items():
             stages.setdefault(name, []).append(ms)
     row["stage_p50_ms_median_client"] = {k: round(statistics.median(v), 1) for k, v in stages.items()}
+    busy: dict[str, list[float]] = {}  # each stage's process() time and calls, summed over every session
+    for c in served:
+        for name, t in c.get("stage_time", {}).items():
+            busy.setdefault(name, [0.0, 0.0])
+            busy[name][0] += t["busy_ms"]
+            busy[name][1] += t["calls"]
+    row["stage_busy_ms"] = {k: {"total": round(v[0]), "per_call": round(v[0] / v[1], 2) if v[1] else None}
+                            for k, v in sorted(busy.items(), key=lambda kv: -kv[1][0])}
     if args.gpu:
         row["gpu"] = {"loaded_mib": loaded, **gpu}
     if args.server_log and args.server_log.exists():
@@ -284,6 +295,9 @@ async def main() -> int:
             if row["stage_p50_ms_median_client"]:
                 print("        stage p50 ms (median client): " + ", ".join(
                     f"{k} {v:.0f}" for k, v in row["stage_p50_ms_median_client"].items()), flush=True)
+            if row["stage_busy_ms"]:
+                print("        busy ms, all sessions (per call): " + ", ".join(
+                    f"{k} {v['total']} ({v['per_call']})" for k, v in list(row["stage_busy_ms"].items())[:6]), flush=True)
             if args.json:
                 args.json.write_text(json.dumps(rows, indent=1) + "\n", encoding="utf-8")
             await asyncio.sleep(args.pause)
