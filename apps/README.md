@@ -174,7 +174,13 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
     no client is refused: everyone gets slow.
   - **What grows first**, per stage p50 at 8 synchronized sessions against one: emotion fusion
     18 → 410 ms, TTS first chunk 55 → 225 ms, final translation 62 → 185 ms, ASR final decode 0 →
-    ~120 ms.
+    ~120 ms. Each session's report (`stage_time`) adds up the time each stage spent processing,
+    and the harness sums it over the sessions: a per-model profile under load.
+  - **Fewer partial emotion estimates are not a free cut.** While someone speaks, the emotion
+    stage runs emotion2vec+ every 500 ms on the last second, and the final emotion is smoothed
+    from them. Through the whole pipeline on the 48 RAVDESS clips (`eval_ecs.py`, offline), the
+    input emotion was read right 0.647 of the time, 0.569 with them every 1,000 ms, and 0.529
+    with none.
   - **Staggered starts are slower than synchronized ones** from 8 sessions on. NLLB's batches are
     small (1–3 requests instead of about 4), and they run while other sessions' models use the
     GPU. NLLB was busy 13.9 s for the same 72 requests that took it 3.2 s synchronized. A final

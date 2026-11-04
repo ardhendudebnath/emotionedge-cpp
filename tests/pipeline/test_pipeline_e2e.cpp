@@ -170,6 +170,11 @@ TEST(PipelineE2E, BlueprintWalkthroughOffline) {
     EXPECT_EQ(run.session["utterances"][0]["translation"]["emphasis"][0], "यकीन");
     EXPECT_EQ(run.session["utterances"][0]["source"]["emphasis"][0], "believe");
     EXPECT_EQ(run.end_to_end_count, 1u);
+    for (const char* stage : {"asr", "emotion", "translate", "tts"}) {  // each stage's time, for profiling
+        ASSERT_TRUE(run.session["stage_time"].contains(stage)) << stage;
+        EXPECT_GT(run.session["stage_time"][stage]["calls"].get<std::uint64_t>(), 0u) << stage;
+        EXPECT_GE(run.session["stage_time"][stage]["busy_ms"].get<double>(), 0.0) << stage;
+    }
 
     check_golden("walkthrough", features(run.result.output_audio, run.result.output_rate));
 }

@@ -270,6 +270,18 @@ std::string to_session_json(const std::vector<UtteranceRecord>& records, const P
         const auto rtf = telemetry->rtf();
         root["asr_rtf"] = {{"count", rtf.count}, {"p50", static_cast<double>(rtf.percentile(0.5)) / 10000.0},
                            {"p95", static_cast<double>(rtf.percentile(0.95)) / 10000.0}};
+        // Where each stage's thread spent its time, its process() calls summed: with several
+        // sessions on one GPU, the stages whose engines wait for it grow.
+        json stages = json::object();
+        for (const auto& h : telemetry->metrics().histograms()) {
+            if (h.name != "ee_stage_process_seconds" || h.snapshot.count == 0) continue;
+            const auto stage = std::find_if(h.labels.begin(), h.labels.end(), [](const auto& l) { return l.first == "stage"; });
+            if (stage == h.labels.end()) continue;
+            stages[stage->second] = {{"calls", h.snapshot.count},
+                                     {"busy_ms", static_cast<double>(h.snapshot.sum) / 1000.0},
+                                     {"p95_ms", static_cast<double>(h.snapshot.percentile(0.95)) / 1000.0}};
+        }
+        root["stage_time"] = std::move(stages);
     }
     return root.dump(2);
 }
