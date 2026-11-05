@@ -302,14 +302,16 @@ public:
             out.tokens = hyp.size();
             std::vector<std::string> target(hyp.begin() + (hyp.empty() ? 0 : 1), hyp.end());  // drop the language token
             std::erase(target, std::string("</s>"));
+            out.looped = !out.truncated && limits_.loops(target);
             sp.Decode(target, &out.text);
             if (want_attention && !result.attention.empty()) {
                 out.alignment = align_emphasis(result.attention[0], tokens, 1 + control_pieces.size(), hyp, source.emphasis);
             }
             return out;
         };
-        // A final cut at its limit: every one measured was a repetition loop (README, "Decode
-        // limits"), which a repetition penalty ended. Decoded once more with it.
+        // A final cut at its limit, or caught in a loop inside it: every one measured was a
+        // repetition loop (README, "Decode limits"), which a repetition penalty ended. Decoded
+        // once more with it.
         const bool may_retry = !r.draft && limits_.retry_penalty > 1.0f;
         const auto retry = [&] {
             TranslationResult again = decode(limits_.retry_penalty);
@@ -353,9 +355,10 @@ public:
             std::vector<std::string>& hyp = result.at(0).hypotheses.at(0);  // ended first: all of it
             out.truncated = hold_to_limit(hyp, out.limit);
             out.tokens = hyp.size();
-            if (out.truncated && may_retry) return retry();  // a whole translation, not partial
             std::vector<std::string> all(hyp.begin() + (hyp.empty() ? 0 : 1), hyp.end());
             std::erase(all, std::string("</s>"));
+            out.looped = !out.truncated && limits_.loops(all);
+            if ((out.truncated || out.looped) && may_retry) return retry();  // a whole translation, not partial
             sp.Decode(all, &out.text);
             if (want_attention && !result.at(0).attention.empty()) {
                 out.alignment = align_emphasis(result.at(0).attention[0], tokens, 1 + control_pieces.size(), hyp, source.emphasis);
@@ -363,7 +366,7 @@ public:
             return out;
         }
         TranslationResult out = decode(1.0f);
-        if (out.truncated && may_retry) return retry();
+        if ((out.truncated || out.looped) && may_retry) return retry();
         return out;
     }
 

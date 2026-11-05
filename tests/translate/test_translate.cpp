@@ -3,6 +3,9 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
+#include <span>
+#include <string>
+#include <vector>
 
 #include "core/pipeline/recorder.hpp"
 #include "core/translate/control_tokens.hpp"
@@ -140,6 +143,29 @@ TEST(DecodeLimits, ScaleWithTheSourceAndHoldDraftsTighter) {
     Params r;
     r.set("retry_penalty", "0.9");
     EXPECT_THROW((void)DecodeLimits::from(r), ConfigError);
+}
+
+// A loop that ends inside the limit: the same 4-grams of pieces over and over, as NLLB's
+// "एक शिक्षक के रूप में एक शिक्षक के रूप में ..." did. A translation seldom repeats one.
+TEST(DecodeLimits, CatchesALoopThatEndsInsideTheLimit) {
+    const DecodeLimits d;
+    std::vector<std::string> loop;
+    for (int i = 0; i < 5; ++i) {
+        for (const char* p : {"\xE2\x96\x81" "a", "\xE2\x96\x81" "b", "\xE2\x96\x81" "c", "\xE2\x96\x81" "d", "\xE2\x96\x81" "e"}) {
+            loop.emplace_back(p);
+        }
+    }
+    EXPECT_TRUE(d.loops(loop));  // 25 pieces, 5 distinct 4-grams of 22
+    std::vector<std::string> sentence;
+    for (int i = 0; i < 14; ++i) sentence.push_back("\xE2\x96\x81" "w" + std::to_string(i));
+    EXPECT_FALSE(d.loops(sentence));
+    EXPECT_FALSE(d.loops(std::span<const std::string>(loop).first(10)));  // under loop_min_pieces: too short to tell
+    DecodeLimits off = d;
+    off.loop_distinct = 0.0f;
+    EXPECT_FALSE(off.loops(loop));
+    Params p;
+    p.set("loop_distinct", "1.5");
+    EXPECT_THROW((void)DecodeLimits::from(p), ConfigError);
 }
 
 TEST(Phrasebook, HoldsTranslationsToTheDecodeLimit) {

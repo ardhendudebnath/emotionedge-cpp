@@ -176,6 +176,10 @@ stages:
       # draft_ratio: 2.5
       # draft_margin: 24
       # retry_penalty: 1.2
+      # A loop that ends inside the limit (4-grams of pieces under loop_distinct distinct, over at
+      # least loop_min_pieces pieces; 0: no check) is treated as a cut one.
+      # loop_distinct: 0.5
+      # loop_min_pieces: 12
       expressivity: ${config_dir}/expressivity.yaml
 
   - name: controller
