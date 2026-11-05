@@ -1,5 +1,7 @@
 #include "core/emotion/consistency_stage.hpp"
 
+#include <string>
+
 #include "core/emotion/prosody_features.hpp"
 #include "core/telemetry/ecs.hpp"
 #include "core/telemetry/telemetry.hpp"
@@ -10,7 +12,9 @@ void EmotionConsistencyStage::open(StageContext& ctx) {
     ctx_ = &ctx;
     const Params& p = ctx.params();
     rate_ = ctx.pipeline().sample_rate;
-    acoustic_ = make_acoustic_model(p, ctx.services().models);  // the same engine as stage 2.2
+    Params engine = p;  // the same engine as stage 2.2, which may batch across sessions
+    if (!engine.has("sessions")) engine.set("sessions", std::to_string(ctx.services().sessions));
+    acoustic_ = make_acoustic_model(engine, ctx.services().models);
     lexical_ = make_lexical_model(p, ctx.services().models);
     fusion_ = FusionConfig::from(p);
     threshold_ = p.real("threshold", threshold_);
