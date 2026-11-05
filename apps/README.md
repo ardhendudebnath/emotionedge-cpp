@@ -214,6 +214,17 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
     small (1–3 requests instead of about 4), and they run while other sessions' models use the
     GPU. NLLB was busy 13.9 s for the same 72 requests that took it 3.2 s synchronized. A final
     waited up to 0.8 s behind them, and up to 2.6 s at 10 sessions.
+  - **Reordering NLLB's work does not help.** Staggered, 69% of finals shared a batch with other
+    sessions' drafts and took twice as long as a final alone. At 8 staggered sessions, against
+    arrival order:
+    - **Finals first** (finals and drafts apart, waiting finals first): first audio p50 1,940 →
+      1,775 ms, but p95 2,618 → 3,058 ms, and the longest wait for a caption update p95 2,215 →
+      3,145 ms. Drafts that wait commit fewer words in time, so some finals decode more.
+    - **Apart, in arrival order:** p50 2,041 → 2,214 ms and p95 2,705 → 3,378 ms. Finals then
+      wait behind separate draft batches.
+
+    Neither ships. The figures are in [docs/batching.md](../docs/batching.md), with the rest of
+    the multi-session work.
 
 The WebSocket protocol, on `ws://HOST:PORT/?rate=16000`, where `rate` is the client's sample rate
 (sessions run at 16 kHz; the server resamples other rates):

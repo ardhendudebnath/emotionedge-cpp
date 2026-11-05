@@ -533,7 +533,12 @@ regenerate the golden features with `EE_UPDATE_GOLDEN=1 ctest -R PipelineE2E`.
      (WSOLA). Three back-to-back sentences on the GPU: 1677 → 688 ms end to end p95, the last
      latency target met;
    - a fast CPU profile (Piper, streamed translation) that meets the latency target without a
-     GPU, giving up the emotion out: jfk.wav 758 ms end to end p95 on the CPU.
+     GPU, giving up the emotion out: jfk.wav 758 ms end to end p95 on the CPU;
+   - multi-session work ([docs/batching.md](docs/batching.md)), measured with a load harness:
+     - decode limits measured on 44 source languages, with every cut and loop reported and retried;
+     - the session capacity: throughput peaks at 10 sessions on a 12 GB GPU, so `--max-sessions`
+       comes from a load test;
+     - emotion2vec+ batched across sessions.
 
    Next: Android and Jetson builds.
 
