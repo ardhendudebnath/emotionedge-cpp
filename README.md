@@ -283,7 +283,10 @@ A decode that reaches its limit without ending is never silent:
   export.
 - **A draft** is dropped, so its words never become the prefix the final pass keeps.
 - **Every cut** is counted in `ee_translate_truncated_total{pass, language, outcome}` (`recovered`,
-  `cut`, `dropped`) and logged with the utterance, source language and token counts.
+  `cut`, `dropped`, `looped`) and logged with the utterance, source language and token counts.
+- **Loops that end inside the limit** are treated the same way (`loop_distinct`,
+  `loop_min_pieces`): the output's 4-grams of pieces are under half distinct, over at least 12
+  pieces.
 - **In a batch**, which decodes to its longest member's limit, each result is held to its own, so
   it does not depend on what it was batched with.
 
@@ -305,8 +308,11 @@ runtime maps into Hindi, decoded as the runtime decodes them (emotion LoRA, neut
 - **All 17 cut finals ended on the retry**, as whole sentences. One still reads wrongly in places
   (a Chinese sentence about the Latin word "civilis"), where before it repeated "लातिन" to the
   cap.
-- **Not caught:** 5 final loops and 2 draft loops end on their own under the limit. Catching
-  those needs a repetition check, not a length limit.
+- **Loops inside the limit:** 5 final loops and 2 draft loops end on their own under it, as
+  "घुमाया जा सकता है, घुमाया जा सकता है, …". The repetition check flags those 7, and none of the
+  other 44,391 finals and 34,687 drafts that are long enough to judge. The lowest score among the
+  others is 0.50, against at most 0.46 for the loops. The retry ended all 5 finals as sentences
+  (distinct 0.74–1.00).
 - **Translation quality** goes up slightly wherever a final was cut, since only the cut sentences
   change. FLORES-200 devtest into Hindi, before (finals capped at 256 tokens) and after, in the
   same batches. The other 29 languages have no final cut, so nothing changes there:
