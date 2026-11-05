@@ -166,22 +166,30 @@ void TranslateStage::translate_final(const Frame& u) {
 
 void TranslateStage::report_cut(const Frame& f, const TranslationResult& result, bool draft, std::string_view language,
                                 std::size_t source_words) {
-    if (!result.truncated && !result.retried) return;
-    const char* outcome = !result.truncated ? "recovered" : draft ? "dropped" : "cut";
+    const bool bad = result.truncated || result.looped;
+    if (!bad && !result.retried) return;
+    const char* outcome = !bad ? "recovered" : draft ? "dropped" : result.truncated ? "cut" : "looped";
     ctx_->services()
         .telemetry->metrics()
-        .counter("ee_translate_truncated_total", "Translations whose decode reached its limit (DecodeLimits)",
+        .counter("ee_translate_truncated_total",
+                 "Translations whose decode reached its limit or looped inside it (DecodeLimits)",
                  {{"pass", draft ? "draft" : "final"}, {"language", std::string(language)}, {"outcome", outcome}})
         .inc();
-    if (!result.truncated) {
+    if (!bad) {
         log::warn("translate: utterance ", f.utterance, "'s final (", language, ", ", source_words,
-                  " source words) was cut at its limit of ", result.limit,
-                  " tokens; a retry with a repetition penalty ended it in ", result.tokens);
+                  " source words) reached its limit of ", result.limit,
+                  " tokens or looped; a retry with a repetition penalty ended it in ", result.tokens);
+        return;
+    }
+    if (result.truncated) {
+        log::warn("translate: utterance ", f.utterance, "'s ", draft ? "draft" : "final", " (", language, ", ",
+                  source_words, " source words) was cut at its limit of ", result.limit, " tokens",
+                  result.retried ? ", and so was its retry" : "", draft ? "; dropped" : "; sent short, flagged truncated");
         return;
     }
     log::warn("translate: utterance ", f.utterance, "'s ", draft ? "draft" : "final", " (", language, ", ", source_words,
-              " source words) was cut at its limit of ", result.limit, " tokens", result.retried ? ", and so was its retry" : "",
-              draft ? "; dropped" : "; sent short, flagged truncated");
+              " source words) went into a repetition loop", result.retried ? ", and so did its retry" : "",
+              draft ? "; dropped" : "; sent as it is");
 }
 
 void TranslateStage::emit_leading(const Frame& u, const std::vector<std::string>& words,
@@ -236,7 +244,7 @@ void TranslateStage::translate_draft(const Frame& t) {
     request.target_prefix = committed_;
     request.draft = true;
     const TranslationResult result = translator->translate(request);
-    if (result.truncated) {  // most likely a loop: its words must not be committed
+    if (result.truncated || result.looped) {  // a loop: its words must not be committed
         report_cut(t, result, true, request.source_language, source_words.size());
         return;
     }
