@@ -2,12 +2,16 @@
 """P4 "Export": emotion2vec+ (blueprint 2.2 "ACOUSTIC: emotion2vec") as the classifier directory
 that core/emotion/onnx_acoustic.cpp loads:
 
-    model.onnx   input "waveform" float32 [1, samples] (16 kHz mono, [-1, 1]); output "logits" [1, classes]
+    model.onnx   input "waveform" float32 [batch, samples] (16 kHz mono, [-1, 1]); output "logits"
+                 [batch, classes]
     labels.json  class -> V·A·D map (emotionedge_ml.emotion_space.label_map)
 
 The graph is FunASR's own utterance-level inference: the per-utterance waveform normalization,
 data2vec features, mean pooling and the classifier. Classes FunASR masks ("unuse_*") get -inf
-logits. The export is checked against FunASR's scores on real clips.
+logits. The export is checked against FunASR's scores on real clips. A batch holds utterances of
+one length only: there is no padding mask, and the normalization and pooling are per row, so
+such a batch gives each row what it would get alone (checked on 1 s windows, as the runtime's
+partial estimates batch them).
 
     python ml/export/export_emotion2vec_onnx.py --out ~/ee-models/emotion/emotion2vec-plus-base \\
         --check data/ravdess.jsonl [--int8]
@@ -73,10 +77,11 @@ def main() -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     onnx_path = args.out / "model.onnx"
-    with torch.no_grad():
-        torch.onnx.export(Emotion2vecLogits().eval(), (torch.randn(1, 32000) * 0.1,), str(onnx_path),
+    with torch.no_grad():  # traced with 2 rows, so that no shape is fixed to one
+        torch.onnx.export(Emotion2vecLogits().eval(), (torch.randn(2, 32000) * 0.1,), str(onnx_path),
                           input_names=["waveform"], output_names=["logits"],
-                          dynamic_axes={"waveform": {1: "samples"}}, opset_version=args.opset, dynamo=False)
+                          dynamic_axes={"waveform": {0: "batch", 1: "samples"}, "logits": {0: "batch"}},
+                          opset_version=args.opset, dynamo=False)
 
     import torchaudio  # type: ignore
 
@@ -117,6 +122,20 @@ def main() -> int:
           f"{np.mean(fp32_ms):.0f} ms per clip (mean clip {seconds.mean():.1f} s)")
     if diff > 1e-3:
         raise SystemExit("ONNX export disagrees with FunASR")
+
+    def batch_check(path: Path) -> float:
+        """Max |logit diff| between 8 one-second windows run one by one and as one batch."""
+        session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        windows = np.stack([np.resize(c, 16000) for c in clips[:8]]).astype(np.float32)
+        alone = np.concatenate([session.run(["logits"], {"waveform": w[None, :]})[0] for w in windows])
+        together = session.run(["logits"], {"waveform": windows})[0]
+        finite = np.isfinite(alone)
+        return float(np.abs(alone[finite] - together[finite]).max())
+
+    batch_diff = batch_check(onnx_path)
+    print(f"onnx fp32, 8 one-second windows in one batch vs one by one: max |logit diff| {batch_diff:.2e}")
+    if batch_diff > 1e-4:
+        raise SystemExit("a batch changes the rows' logits")
 
     if args.int8:
         from onnxruntime.quantization import QuantType, quantize_dynamic  # type: ignore

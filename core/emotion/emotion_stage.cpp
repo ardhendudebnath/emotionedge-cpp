@@ -1,6 +1,7 @@
 #include "core/emotion/emotion_stage.hpp"
 
 #include <algorithm>
+#include <string>
 
 #include "core/telemetry/telemetry.hpp"
 
@@ -10,7 +11,9 @@ void EmotionEngineStage::open(StageContext& ctx) {
     ctx_ = &ctx;
     const Params& p = ctx.params();
     rate_ = ctx.pipeline().sample_rate;
-    acoustic_ = make_acoustic_model(p, ctx.services().models);
+    Params engine = p;  // the model may batch the requests of every session the process runs
+    if (!engine.has("sessions")) engine.set("sessions", std::to_string(ctx.services().sessions));
+    acoustic_ = make_acoustic_model(engine, ctx.services().models);
     lexical_ = make_lexical_model(p, ctx.services().models);
     fusion_ = FusionConfig::from(p);
     smoother_ = EmotionSmoother(p.real("ema_alpha", 0.5f));

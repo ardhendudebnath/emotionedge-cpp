@@ -114,6 +114,10 @@ stages:
       acoustic: onnx
       acoustic_model_id: emotion.acoustic.emotion2vec_plus_base
       acoustic_max_seconds: 6     # the utterance's last 6 s; cost grows with length
+      # Several sessions on a GPU (serve --max-sessions) batch the waveforms of one length, i.e.
+      # every session's 1 s partial estimates, with an export that has a dynamic batch axis
+      # (ml/export/export_emotion2vec_onnx.py); one fixed to batch 1 runs as before.
+      # acoustic_batch: auto      # auto | on | off
       lexical: onnx
       lexical_model_id: emotion.lexical.distilroberta_en
       lexical_device: cpu         # its INT8 graph: 4 ms per sentence on the CPU, 10 ms on CUDA

@@ -4,10 +4,16 @@
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <thread>
+#include <vector>
 
+#include "core/emotion/acoustic.hpp"
 #include "core/emotion/bpe_tokenizer.hpp"
 #include "core/emotion/class_mapping.hpp"
 #include "core/emotion/emotion_types.hpp"
@@ -135,6 +141,56 @@ TEST(ClassEmotionMap, RejectsLabelsWithoutPosition) {
     EXPECT_THROW((void)ClassEmotionMap::from_file(path), ConfigError);
     fs::remove(path);
 }
+
+#if defined(EE_HAVE_ONNXRUNTIME)
+// emotion2vec+ shared by the server's sessions: 8 users of one model (4 sessions' emotion engine
+// and consistency check) estimate 1 s windows at the same moment, which batch together, and each
+// gets what the model gives its window alone. EE_ACOUSTIC_MODEL_DIR=<a classifier export with a
+// dynamic batch axis (ml/export/export_emotion2vec_onnx.py)>.
+TEST(OnnxAcoustic, BatchesAcrossSessionsAndEachGetsItsOwn) {
+    const char* dir = std::getenv("EE_ACOUSTIC_MODEL_DIR");
+    if (dir == nullptr) GTEST_SKIP() << "set EE_ACOUSTIC_MODEL_DIR to run";
+    Params alone;
+    alone.set("acoustic", "onnx");
+    alone.set("acoustic_model", dir);
+    alone.set("acoustic_batch", "off");
+    Params shared = alone;
+    shared.set("acoustic_batch", "on");
+    shared.set("sessions", "4");
+
+    std::vector<std::vector<float>> windows(8, std::vector<float>(16000));
+    for (std::size_t w = 0; w < windows.size(); ++w) {  // a different tone and loudness each
+        for (std::size_t i = 0; i < windows[w].size(); ++i) {
+            windows[w][i] = (0.05f + 0.05f * static_cast<float>(w)) *
+                            std::sin(0.02f * static_cast<float>(w + 1) * static_cast<float>(i));
+        }
+    }
+    const auto single = make_acoustic_model(alone, nullptr);
+    std::vector<ModalityEstimate> expected;
+    for (const auto& w : windows) expected.push_back(single->estimate(w, {}, 0.01f));
+
+    std::vector<std::unique_ptr<IAcousticEmotionModel>> users;
+    for (std::size_t i = 0; i < windows.size(); ++i) users.push_back(make_acoustic_model(shared, nullptr));
+    std::vector<ModalityEstimate> got(windows.size());
+    std::atomic<bool> go{false};
+    std::vector<std::thread> threads;
+    for (std::size_t i = 0; i < windows.size(); ++i) {
+        threads.emplace_back([&, i] {
+            while (!go.load()) std::this_thread::yield();
+            got[i] = users[i]->estimate(windows[i], {}, 0.01f);
+        });
+    }
+    go.store(true);
+    for (auto& t : threads) t.join();
+    for (std::size_t i = 0; i < windows.size(); ++i) {
+        ASSERT_TRUE(got[i].valid) << i;
+        EXPECT_NEAR(got[i].vad.v, expected[i].vad.v, 1e-4f) << i;
+        EXPECT_NEAR(got[i].vad.a, expected[i].vad.a, 1e-4f) << i;
+        EXPECT_NEAR(got[i].vad.d, expected[i].vad.d, 1e-4f) << i;
+        EXPECT_NEAR(got[i].confidence.v, expected[i].confidence.v, 1e-4f) << i;
+    }
+}
+#endif
 
 }  // namespace
 }  // namespace ee
