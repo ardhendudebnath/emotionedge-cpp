@@ -105,7 +105,8 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
     same moment run as one batch (`translate.batch: auto`). On the CPU, each session that may
     run at once (`--max-sessions`) gets a replica, and the replicas share the weights.
     `translate.batch` and `translate.replicas` override.
-  - **ONNX Runtime models:** one session per model.
+  - **ONNX Runtime models:** one session per model. On a GPU, emotion2vec+ batches the sessions'
+    1 s partial estimates (below).
 
   A session still holds its own state: its voice print, emotion state and decoder buffers.
   `--max-sessions` refuses connections beyond the limit; warm sessions come on top of it.
@@ -176,6 +177,24 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
     18 → 410 ms, TTS first chunk 55 → 225 ms, final translation 62 → 185 ms, ASR final decode 0 →
     ~120 ms. Each session's report (`stage_time`) adds up the time each stage spent processing,
     and the harness sums it over the sessions: a per-model profile under load.
+  - **emotion2vec+ is batched across sessions** (`emotion.acoustic_batch: auto`, with an export
+    that has a dynamic batch axis). It was the largest user of the GPU at 8 synchronized
+    sessions: the emotion stage busy 36 s and the consistency check 11 s, against 23 s for NLLB.
+    Every session's partial estimates are 1 s windows, so they batch without padding. Each row
+    gets what it would alone (to 6e-6 in the logits), and waveforms of other lengths run alone.
+    8 sessions, 3 interleaved blocks, medians of the runs:
+
+    | | Unbatched | Batched |
+    |---|---|---|
+    | Synchronized (6 runs): first audio p50 / p95 | 1,502 / 1,650 ms | **1,296 / 1,453 ms** |
+    | final caption p50 | 1,083 ms | **913 ms** |
+    | emotion fusion p50 | 522 ms | **371 ms** |
+    | Staggered (3 runs): first audio p50 / p95 | 3,022 / 4,062 ms | **2,512 / 3,278 ms** |
+    | emotion fusion p50 | **92 ms** | 228 ms |
+
+    Staggered arrivals seldom share a batch, and all of the model's calls now go through one
+    worker, so emotion comes later. It is off the critical path there, behind the final
+    translation (600–1,000 ms). Run to run, the spread overlaps: a likely gain, not a proven one.
   - **Fewer partial emotion estimates are not a free cut.** While someone speaks, the emotion
     stage runs emotion2vec+ every 500 ms on the last second, and the final emotion is smoothed
     from them. Through the whole pipeline on the 48 RAVDESS clips (`eval_ecs.py`, offline), the

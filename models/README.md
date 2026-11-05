@@ -42,7 +42,10 @@ python ml/export/export_emotion2vec_onnx.py --out models/emotion/emotion2vec-plu
 python ml/export/export_lexical_onnx.py --out models/emotion/distilroberta-emotion-en --int8
 ```
 
-- **emotion2vec+ base** stays FP32 (373 MB). INT8 flipped 2 of 64 check clips.
+- **emotion2vec+ base** stays FP32 (373 MB). INT8 flipped 2 of 64 check clips. Exports since
+  the batching change have a dynamic batch axis, so a server's sessions can batch it on a GPU
+  (`emotion.acoustic_batch`); alone, their logits equal the earlier exports'. Re-export an
+  earlier one to batch it, and update its sha256 in a pinned manifest.
 - **DistilRoBERTa** is INT8 (83 MB, 1.9 ms per sentence).
 - **Licenses:** emotion2vec+ is under FunASR's model license (attribution). The DistilRoBERTa
   model card states no license, so clear it before shipping.
