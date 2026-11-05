@@ -172,6 +172,16 @@ Each client gets one live session, the same threaded graph as `live` (`core/serv
     From 14 on, every model slows at once (ASR final decode 10 s and emotion fusion 17 s p50 in
     one run), as when the driver spills GPU memory into system memory. No allocation fails and
     no client is refused: everyone gets slow.
+  - **Set `--max-sessions` from a load test on the server's own GPU**, at most what the table
+    shows before latency climbs: 8–10 here. Two ways of setting it from GPU memory were built and
+    measured, and neither holds:
+    - **Free memory, read as sessions load:** memory the engines cached in a busy round reads as
+      used, so 5 of 8 clients were refused in a round that fit. Connections arriving together all
+      passed the check before any of them had allocated.
+    - **A session count, measured as warm sessions load idle:** it measured 375–424 MiB per
+      session after the first and allowed 15–17 sessions. A running session takes about 0.45 GB
+      more: at 8 sessions, memory went from 5.7 GB loaded to a 9.3 GB peak. 12 sessions then
+      reached 5.2–6.2 s first audio p50 and 16 reached 13–14 s, with nobody refused.
   - **What grows first**, per stage p50 at 8 synchronized sessions against one: emotion fusion
     18 → 410 ms, TTS first chunk 55 → 225 ms, final translation 62 → 185 ms, ASR final decode 0 →
     ~120 ms. Each session's report (`stage_time`) adds up the time each stage spent processing,
