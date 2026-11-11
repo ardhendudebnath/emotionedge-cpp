@@ -41,6 +41,42 @@ jobs:
       - name: Latency harness (smoke)
         run: build/bench/ee_bench --offline --repeat 1 --out "$RUNNER_TEMP/bench"
 
+  # 64-bit ARM, the Jetson class of board: native on GitHub's ARM runner, and cross-compiled on
+  # x86-64 with cmake/toolchains/aarch64-linux-gnu.cmake (the demo then runs under QEMU).
+  arm64:
+    name: linux / arm64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 2
+      - name: Demo (blueprint walkthrough)
+        run: build/apps/emotionedge demo --out "$RUNNER_TEMP/walkthrough"
+
+  arm64-cross:
+    name: linux / arm64 cross-compiled
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cross toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-aarch64-linux-gnu qemu-user-static
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu.cmake \
+            -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON -DEE_BUILD_TESTS=OFF
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Demo under QEMU
+        run: |
+          file build/apps/emotionedge | grep -q aarch64
+          qemu-aarch64-static -L /usr/aarch64-linux-gnu build/apps/emotionedge demo --out "$RUNNER_TEMP/walkthrough"
+
   windows:
     name: windows / msvc
     runs-on: windows-latest
