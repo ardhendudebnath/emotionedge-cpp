@@ -252,7 +252,8 @@ training judge without sounding more emotional to another model, and that cost i
 They were not adopted, and the shipped offsets stay.
 
 The two judges disagree on trimmed audio. The next step needs a better arbiter than either:
-listening tests, or a third judge that plays no part in training.
+listening tests, or a third judge that plays no part in training. A third judge was tried and
+failed; on sadness, only listeners can decide (see "How far to trust the judges").
 
 `eval/eval_tts_speed.py` sets the cap for the runtime's adaptive pacing. It renders 24 held-out
 sentences with the 4 voices at each speed, and Whisper-small transcribes them:
@@ -416,6 +417,67 @@ Listeners pick the clip that sounds more angry, happy or sad, or "no difference"
 in a shuffled order with the sides flipped at random, per listener. The test runs as a shared
 page whose answers tally across listeners. A setting carries its emotion when most people pick
 its clip.
+
+## How far to trust the judges (P4)
+
+`eval/eval_judges.py ravdess` measures each automatic judge where the answer is known. It uses
+RAVDESS's neutral, happy, sad and angry takes: 24 actors, 672 clips of acted English that none of
+the judges trained on. Each clip is judged as recorded, and trimmed the way the runtime trims
+Kokoro (`played()`). The judges share one interface, `emotionedge_ml/judges.py`.
+
+The third judge is SpeechBrain's wav2vec2-base fine-tuned on IEMOCAP
+(`speechbrain/emotion-recognition-wav2vec2-IEMOCAP`, Apache-2.0). It has four classes: neutral,
+anger, joy and sadness. It was picked because it shares no lab, architecture or training data
+with the other two judges. `judges.py` runs it with transformers alone, from the model's
+checkpoint and wav2vec2-base's config. On the model's four sample clips and eight RAVDESS clips,
+this matches SpeechBrain's own interface to within 1.1e-5 in every probability (SpeechBrain adds
+that much noise when pooling), with the same top label on all 12.
+
+Two measures:
+- **Four-way:** balanced accuracy over the four classes. audeering is scored by the nearest
+  prototype in V·A·D.
+- **Pairs:** the question the TTS evaluations ask. Each actor says each sentence plainly and
+  with the emotion. Is the emotional take heard as more of that emotion than the same actor's
+  neutral take of the same sentence? For a classifier that means a higher P(emotion); for
+  audeering, a higher projection onto the emotion's prototype. There are 192 pairs per emotion,
+  and 0.5 is chance.
+
+Trimmed clips (the recorded ones tell the same story):
+
+| judge | four-way balanced accuracy | pairs: anger | joy | sadness (normal / strong) |
+|---|---|---|---|---|
+| emotion2vec+ (the training judge) | 0.92 | 1.00 | 0.99 | 0.97 (0.94 / 1.00) |
+| audeering V·A·D (independent) | 0.48 | 0.99 | 0.95 | **0.60 (0.80 / 0.41)** |
+| IEMOCAP (the third judge) | 0.35 | 0.78 | 0.57 | 0.63 (0.61 / 0.65) |
+
+- **The IEMOCAP judge fails** (negative). It hears anger in 81–88% of all clips, with P 0.99 on
+  average, and sadness in at most 2 of the 192 sad ones. Its pairs are barely above chance for
+  joy and sadness. It does not carry over from IEMOCAP's recordings, so it cannot arbitrate, and it was
+  not run on Kokoro.
+- **audeering is reliable for anger and joy, not for sadness.** It hears mainly arousal and
+  dominance:
+  - Its valence is negative for every class. Joy comes out at −0.19 normal and −0.28 strong,
+    no better than neutral's −0.20, so its four-way joy recall is 0.03.
+  - RAVDESS's strong sadness is crying. It raises audeering's arousal and dominance (A +0.13,
+    D +0.16, against A −0.25, D −0.07 for normal sadness), so audeering hears it as less sad
+    than the neutral take.
+  - Its sadness shift therefore measures quiet sadness only.
+- **emotion2vec+ is by far the best on real speech.** Its RAVDESS scores may be flattered,
+  since we cannot rule out that RAVDESS is in its training data. On Kokoro, though, it is the
+  judge the offsets and plans were optimised against. Where it disagrees, it is the party under
+  suspicion: the fear offset fooled it alone (see the style offsets above).
+
+What this changes:
+- **Anger and joy:** audeering's verdicts stand. The re-learned joy offset, which emotion2vec+
+  liked and audeering heard as less aroused, stays rejected.
+- **Sadness has no automatic arbiter.** audeering's support for the shipped sadness plan (an
+  independent shift of +0.240 → +0.295 at strength 0.7) is weak evidence, and emotion2vec+'s
+  cannot be checked. Sadness is what the listening test has to settle, through its 10 sadness
+  pairs.
+
+```
+python ml/eval/eval_judges.py ravdess --ravdess ~/ee-data/ravdess --json out/judges.json
+```
 
 ## Speaker-aware barge-in (P4)
 
