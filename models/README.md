@@ -6,14 +6,19 @@ refuses a mismatched file.
 
 | id | task | size | license |
 |---|---|---|---|
-| `vad.silero.v6` | voice activity (1.3) | ~2 MB | MIT |
-| `asr.whisper.base.q5_1` | streaming ASR (2.1) | 57 MB | MIT |
-| `mt.nllb200.distilled600m.int8` | translation (3.2) | ~620 MB | **CC-BY-NC-4.0, non-commercial** |
-| `tts.piper.hi_IN.pratham.medium` | TTS (4.2), Hindi | 61 MB | see the voice's MODEL_CARD |
-| `tts.piper.en_US.lessac.medium` | TTS (4.2), English | 60 MB | see the voice's MODEL_CARD |
+| `vad.silero.v6` | voice activity (1.3) | 2 MB | MIT |
+| `asr.whisper.base.q5_1` | streaming ASR (2.1) | 60 MB | MIT |
+| `emotion.acoustic.emotion2vec_plus_base` | acoustic emotion (2.2) | 373 MB | FunASR Model License 1.1 (attribution, among other terms) |
+| `emotion.lexical.distilroberta_en` | lexical emotion (2.2), English | 86 MB | **none stated: shipping it needs its author's permission** |
+| `mt.nllb200.distilled600m.int8` | translation (3.2) | 634 MB | **CC-BY-NC-4.0, non-commercial** |
+| `mt.nllb200.distilled600m.emo.int8` | translation (3.2), en→hi with emotion tokens | 633 MB | **CC-BY-NC-4.0, non-commercial** |
+| `tts.kokoro.82m.hi` | TTS (4.2), Hindi | 328 MB | Apache-2.0 |
+| `tts.piper.hi_IN.pratham.medium` | TTS (4.2), Hindi | 64 MB | MIT; **training data CC BY-NC-SA 4.0, non-commercial** |
+| `tts.piper.en_US.lessac.medium` | TTS (4.2), English | 63 MB | MIT; **training data licensed for research only** |
+| `speaker.ecapa.voxceleb` | voice print (barge-in, voice matching) | 84 MB | Apache-2.0 |
 
-Check each model's license before shipping. The blueprint notes that several emotion datasets
-and some TTS weights are research-only.
+[docs/licenses.md](../docs/licenses.md) says what each build may be used for, with the libraries
+and training data behind it. In short, NLLB makes every build that translates non-commercial.
 
 ## Fetch
 
@@ -47,8 +52,9 @@ python ml/export/export_lexical_onnx.py --out models/emotion/distilroberta-emoti
   (`emotion.acoustic_batch`); alone, their logits equal the earlier exports'. Re-export an
   earlier one to batch it, and update its sha256 in a pinned manifest.
 - **DistilRoBERTa** is INT8 (83 MB, 1.9 ms per sentence).
-- **Licenses:** emotion2vec+ is under FunASR's model license (attribution). The DistilRoBERTa
-  model card states no license, so clear it before shipping.
+- **Licenses:** emotion2vec+ is under the FunASR Model License (attribution, among other
+  terms). The DistilRoBERTa model card states no license, so shipping it needs its author's
+  permission. See [docs/licenses.md](../docs/licenses.md).
 
 The phase-3 voice models are exported the same way, each checked against its original.
 

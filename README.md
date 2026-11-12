@@ -463,8 +463,12 @@ The measurements used:
 | `EE_WITH_GRPC` | `emotionedge serve --grpc-port`: gRPC streaming server (5.3), and the `stream` client | gRPC and protobuf installed (apt: `libgrpc++-dev protobuf-compiler-grpc`); with CTranslate2 it also builds SentencePiece |
 | `EE_WITH_DESKTOP` | `emotionedge-desktop`: the desktop app (5.3) | `EE_WITH_MINIAUDIO`, X11 headers; Dear ImGui, GLFW, HarfBuzz and the font are fetched |
 
-[models/README.md](models/README.md) lists every model with its license. NLLB-200 weights are
-non-commercial, and several emotion datasets are research-only: check before shipping.
+[models/README.md](models/README.md) lists every model with its license, and
+[docs/licenses.md](docs/licenses.md) says what each build may be used for:
+- The stand-in build is permissive throughout.
+- NLLB-200 (CC-BY-NC-4.0) makes every build that translates non-commercial.
+- espeak-ng (GPL-3.0), linked by `EE_WITH_PIPER`, puts binaries that include it under the GPL.
+- This repository has no license of its own yet.
 
 ## Layout
 
@@ -581,6 +585,9 @@ unpacked `libc.so` and `libm.so` linker scripts at the copy.
    - the runtime on 64-bit ARM, the Jetson class of board: stand-in engines, built and tested
      natively in CI and cross-compiled (see "64-bit ARM").
 
-   Next: the real engines on a Jetson (JetPack's CUDA), and Android.
+   Next:
+   - the real engines on a Jetson (JetPack's CUDA), and Android;
+   - before a release, a license for this repository and permission for, or replacements of,
+     the models that limit use ([docs/licenses.md](docs/licenses.md)).
 
 Every phase ends with the P5 quality gate (`ml/eval/quality_gate.py`).
