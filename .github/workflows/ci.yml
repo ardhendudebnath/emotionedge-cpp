@@ -27,7 +27,7 @@ jobs:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON
       - name: Build
@@ -47,7 +47,7 @@ jobs:
     name: linux / arm64
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # With whisper.cpp (its CPU backend, NEON): the first real engine on ARM.
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON -DEE_WITH_WHISPER=ON
@@ -62,7 +62,7 @@ jobs:
     name: linux / arm64 cross-compiled
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cross toolchain and QEMU
         run: |
           sudo apt-get update
@@ -82,7 +82,7 @@ jobs:
     name: windows / msvc
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: cmake -S . -B build
       - name: Build
@@ -99,7 +99,7 @@ jobs:
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # With the WebSocket server: its socket, session and pump threads get checked too.
       - name: AddressSanitizer + UndefinedBehaviorSanitizer
         run: |
@@ -120,7 +120,7 @@ jobs:
       ORT_VERSION: 1.30.0
       CT2_VERSION: 4.8.2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: System packages (espeak-ng, SentencePiece, OpenBLAS, oneDNN, gRPC)
         run: |
           sudo apt-get update
@@ -133,7 +133,7 @@ jobs:
           tar xzf ort.tgz -C "$HOME/ort" --strip-components=1
       - name: Cache CTranslate2
         id: ct2-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/ct2
           key: ct2-${{ env.CT2_VERSION }}-openblas-dnnl-ubuntu-24.04
@@ -167,7 +167,7 @@ jobs:
     name: linux / desktop app
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: System packages (X11 headers for GLFW, Xvfb and Mesa to run it headless)
         run: |
           sudo apt-get update
@@ -186,7 +186,7 @@ jobs:
             --set asr.engine=scripted --set asr.script="$RUNNER_TEMP/demo/input.script.json" \
             --input "$RUNNER_TEMP/demo/input.wav" --mute --screenshot "$RUNNER_TEMP/desktop.png"
           test -s "$RUNNER_TEMP/desktop.png"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-screenshot
           path: ${{ runner.temp }}/desktop.png
@@ -195,8 +195,8 @@ jobs:
     name: ml factory (python)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Unit tests
@@ -207,7 +207,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
