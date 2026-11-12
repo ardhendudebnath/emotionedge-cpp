@@ -27,9 +27,11 @@ jobs:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      # Configuring downloads the FetchContent archives, so it runs under .github/retry.sh, which
+      # retries a transient failure (as do the apt and curl steps below).
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON
+        run: bash .github/retry.sh cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON
       - name: Build
         run: cmake --build build -j 4
       - name: Test
@@ -47,10 +49,10 @@ jobs:
     name: linux / arm64
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # With whisper.cpp (its CPU backend, NEON): the first real engine on ARM.
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON -DEE_WITH_WHISPER=ON
+        run: bash .github/retry.sh cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON -DEE_WITH_WHISPER=ON
       - name: Build
         run: cmake --build build -j 4
       - name: Test
@@ -62,14 +64,14 @@ jobs:
     name: linux / arm64 cross-compiled
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cross toolchain and QEMU
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends g++-aarch64-linux-gnu qemu-user-static
+          bash .github/retry.sh sh -c 'sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            g++-aarch64-linux-gnu qemu-user-static'
       - name: Configure
         run: |
-          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu.cmake \
+          bash .github/retry.sh cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu.cmake \
             -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON -DEE_BUILD_TESTS=OFF
       - name: Build
         run: cmake --build build -j 4
@@ -82,9 +84,10 @@ jobs:
     name: windows / msvc
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
-        run: cmake -S . -B build
+        shell: bash
+        run: bash .github/retry.sh cmake -S . -B build
       - name: Build
         run: cmake --build build --config Release -- /m
       - name: Test
@@ -99,16 +102,16 @@ jobs:
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
       TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # With the WebSocket server: its socket, session and pump threads get checked too.
       - name: AddressSanitizer + UndefinedBehaviorSanitizer
         run: |
-          cmake --preset asan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF -DEE_WITH_WEBSOCKET=ON
+          bash .github/retry.sh cmake --preset asan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF -DEE_WITH_WEBSOCKET=ON
           cmake --build build/asan -j 4
           ctest --test-dir build/asan --output-on-failure -j 2
       - name: ThreadSanitizer
         run: |
-          cmake --preset tsan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF -DEE_WITH_WEBSOCKET=ON
+          bash .github/retry.sh cmake --preset tsan -DEE_BUILD_APPS=OFF -DEE_BUILD_BENCH=OFF -DEE_WITH_WEBSOCKET=ON
           cmake --build build/tsan -j 4
           # TSan cannot map its shadow memory under high-entropy ASLR: disable it for the run.
           setarch "$(uname -m)" -R ctest --test-dir build/tsan --output-on-failure
@@ -120,20 +123,20 @@ jobs:
       ORT_VERSION: 1.30.0
       CT2_VERSION: 4.8.2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: System packages (espeak-ng, SentencePiece, OpenBLAS, oneDNN, gRPC)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libespeak-ng-dev libsentencepiece-dev libopenblas-dev libdnnl-dev \
-            libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler libssl-dev
+          bash .github/retry.sh sh -c 'sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            libespeak-ng-dev libsentencepiece-dev libopenblas-dev libdnnl-dev \
+            libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler libssl-dev'
       - name: ONNX Runtime ${{ env.ORT_VERSION }}
         run: |
-          curl -fsSL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          bash .github/retry.sh curl -fsSL -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
           mkdir -p "$HOME/ort"
           tar xzf ort.tgz -C "$HOME/ort" --strip-components=1
       - name: Cache CTranslate2
         id: ct2-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/ct2
           key: ct2-${{ env.CT2_VERSION }}-openblas-dnnl-ubuntu-24.04
@@ -149,7 +152,7 @@ jobs:
           cmake --install /tmp/ct2/build
       - name: Configure with every adapter
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON \
+          bash .github/retry.sh cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON \
             -DEE_WITH_ONNXRUNTIME=ON -DEE_WITH_WHISPER=ON -DEE_WITH_CTRANSLATE2=ON \
             -DEE_WITH_PIPER=ON -DEE_WITH_MINIAUDIO=ON -DEE_WITH_WEBSOCKET=ON -DEE_WITH_GRPC=ON \
             -DEE_ONNXRUNTIME_ROOT="$HOME/ort" -DCMAKE_PREFIX_PATH="$HOME/ct2"
@@ -167,14 +170,14 @@ jobs:
     name: linux / desktop app
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: System packages (X11 headers for GLFW, Xvfb and Mesa to run it headless)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libx11-dev libxrandr-dev libxinerama-dev \
-            libxcursor-dev libxi-dev libxext-dev xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri
+          bash .github/retry.sh sh -c 'sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev \
+            xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri'
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON -DEE_WITH_MINIAUDIO=ON -DEE_WITH_DESKTOP=ON
+        run: bash .github/retry.sh cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEE_WARNINGS_AS_ERRORS=ON -DEE_WITH_MINIAUDIO=ON -DEE_WITH_DESKTOP=ON
       - name: Build
         run: cmake --build build -j 4
       - name: Test
@@ -186,7 +189,7 @@ jobs:
             --set asr.engine=scripted --set asr.script="$RUNNER_TEMP/demo/input.script.json" \
             --input "$RUNNER_TEMP/demo/input.wav" --mute --screenshot "$RUNNER_TEMP/desktop.png"
           test -s "$RUNNER_TEMP/desktop.png"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: desktop-screenshot
           path: ${{ runner.temp }}/desktop.png
@@ -195,8 +198,8 @@ jobs:
     name: ml factory (python)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Unit tests
@@ -207,9 +210,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: bash .github/retry.sh cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build -j 3
       - name: Test
