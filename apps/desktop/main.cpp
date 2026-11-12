@@ -27,6 +27,7 @@
 #include "apps/desktop/shaped_text.hpp"
 #include "core/audio/device.hpp"
 #include "core/pipeline/live_view.hpp"
+#include "core/runtime/install_paths.hpp"
 
 namespace fs = std::filesystem;
 using namespace ee;
@@ -59,14 +60,30 @@ struct Gl {
 
 struct Options {
     DesktopSession::Settings settings;
-    fs::path font = EE_DESKTOP_FONT;
+    fs::path font;
     fs::path screenshot;
     double after_s = -1.0;
 };
 
-Options parse(int argc, char** argv) {
+/// The defaults: a checkout's config in the working directory (the real engines' if there),
+/// else an installed copy's (<prefix>/share/emotionedge), else the source tree's; the font from
+/// an install, else from the build tree.
+Options defaults() {
+    const fs::path data = installed_data_dir(executable_path(), EE_INSTALL_BINDIR, EE_INSTALL_DATADIR);
+    const auto in_data = [&](const fs::path& rel) { return data.empty() ? fs::path() : data / rel; };
+    const fs::path source = EE_DEFAULT_CONFIG_DIR;
     Options o;
-    o.settings.config = fs::exists("config/pipeline.engines.yaml") ? "config/pipeline.engines.yaml" : "config/pipeline.yaml";
+    o.settings.config = first_existing({"config/pipeline.engines.yaml", "config/pipeline.yaml",
+                                        in_data("config/pipeline.engines.yaml"), in_data("config/pipeline.yaml"),
+                                        source / "pipeline.engines.yaml", source / "pipeline.yaml"});
+    if (o.settings.config.empty()) o.settings.config = "config/pipeline.yaml";  // its error names the file
+    o.font = first_existing({in_data(fs::path("fonts") / fs::path(EE_DESKTOP_FONT).filename())});
+    if (o.font.empty()) o.font = EE_DESKTOP_FONT;
+    return o;
+}
+
+Options parse(int argc, char** argv) {
+    Options o = defaults();
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         const auto value = [&]() -> std::string {

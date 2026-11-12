@@ -6,7 +6,7 @@ if(EE_FETCH_DEPS)
         URL https://github.com/google/googletest/releases/download/v1.18.0/googletest-1.18.0.tar.gz
         URL_HASH SHA256=6e3191c1455468b3fc35a417fb565c1c5071aee1b7e7f85e30cf48a98d37d8b5
         FIND_PACKAGE_ARGS NAMES GTest)
-    FetchContent_MakeAvailable(googletest)
+    ee_make_available(googletest)
 else()
     find_package(GTest CONFIG REQUIRED)
 endif()
@@ -30,6 +30,7 @@ add_executable(ee_tests
     runtime/test_batcher.cpp
     runtime/test_config.cpp
     runtime/test_graph.cpp
+    runtime/test_install_paths.cpp
     runtime/test_model_registry.cpp
     runtime/test_sha256.cpp
     runtime/test_shared_cache.cpp

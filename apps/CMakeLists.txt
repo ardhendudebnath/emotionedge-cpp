@@ -9,7 +9,12 @@ endif()
 if(EE_WITH_GRPC)
     target_link_libraries(emotionedge PRIVATE ee::grpc_proto)  # the `stream` client's stubs
 endif()
-target_compile_definitions(emotionedge PRIVATE
+# Where an installed copy keeps its data, relative to its prefix (cmake/Install.cmake); the
+# source and build trees are the fallback when the app runs from a build.
+set(EE_APP_PATHS
+    EE_INSTALL_BINDIR="${CMAKE_INSTALL_BINDIR}"
+    EE_INSTALL_DATADIR="${EE_INSTALL_DATADIR}")
+target_compile_definitions(emotionedge PRIVATE ${EE_APP_PATHS}
     EE_DEFAULT_CONFIG="${PROJECT_SOURCE_DIR}/config/pipeline.yaml"
     EE_VERSION="${PROJECT_VERSION}")
 
@@ -21,7 +26,9 @@ if(EE_WITH_DESKTOP)
         desktop/shaped_text.cpp
         desktop/stb_truetype_impl.cpp)
     target_link_libraries(emotionedge-desktop PRIVATE ee::pipeline ee::imgui harfbuzz ee_project_options)
-    target_compile_definitions(emotionedge-desktop PRIVATE EE_DESKTOP_FONT="${EE_DESKTOP_FONT}")
+    target_compile_definitions(emotionedge-desktop PRIVATE ${EE_APP_PATHS}
+        EE_DESKTOP_FONT="${EE_DESKTOP_FONT}"
+        EE_DEFAULT_CONFIG_DIR="${PROJECT_SOURCE_DIR}/config")
     # Third-party code compiled here (stb_truetype as ImGui bundles it): not held to our warnings.
     set_source_files_properties(desktop/stb_truetype_impl.cpp PROPERTIES
         COMPILE_OPTIONS $<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>)

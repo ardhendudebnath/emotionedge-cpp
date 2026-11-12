@@ -42,6 +42,16 @@ jobs:
           build/apps/emotionedge demo --conversation --realtime --speed 4 --out "$RUNNER_TEMP/conversation"
       - name: Latency harness (smoke)
         run: build/bench/ee_bench --offline --repeat 1 --out "$RUNNER_TEMP/bench"
+      # Last: it hides the source tree's configs, so the install must find its own.
+      - name: Install, and run the install on its own
+        run: |
+          cmake --install build --prefix "$RUNNER_TEMP/ee"
+          if find "$RUNNER_TEMP/ee" \( -name '*.h' -o -name '*.hpp' -o -name '*.a' -o -name '*.cmake' \) | grep .; then
+            echo "::error::a fetched dependency installed files of its own"; exit 1
+          fi
+          test -s "$RUNNER_TEMP/ee/share/doc/EmotionEdge/THIRD_PARTY_NOTICES.md"
+          mv config config.hidden
+          cd "$RUNNER_TEMP" && "$RUNNER_TEMP/ee/bin/emotionedge" demo --out "$RUNNER_TEMP/installed-demo"
 
   # 64-bit ARM, the Jetson class of board: native on GitHub's ARM runner, and cross-compiled on
   # x86-64 with cmake/toolchains/aarch64-linux-gnu.cmake (the demo then runs under QEMU).
@@ -94,6 +104,12 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Demo
         run: build/apps/Release/emotionedge.exe demo --out "$env:RUNNER_TEMP/walkthrough"
+      - name: Install, and run the install on its own
+        shell: bash
+        run: |
+          cmake --install build --config Release --prefix "$RUNNER_TEMP/ee"
+          mv config config.hidden
+          cd "$RUNNER_TEMP" && ./ee/bin/emotionedge.exe demo --out installed-demo
 
   sanitizers:
     name: linux / sanitizers
@@ -165,6 +181,22 @@ jobs:
           build/apps/emotionedge stages
           build/apps/emotionedge models list
           build/apps/emotionedge demo --out "$RUNNER_TEMP/walkthrough"
+      - name: Install (third-party notices)
+        run: |
+          cmake --install build --prefix "$RUNNER_TEMP/ee"
+          doc="$RUNNER_TEMP/ee/share/doc/EmotionEdge"
+          cat "$doc/THIRD_PARTY_NOTICES.md"
+          for f in whisper.cpp/LICENSE onnxruntime/LICENSE sentencepiece/LICENSE espeak-ng/copyright espeak-ng/GPL-3 \
+                   ixwebsocket/LICENSE.txt miniaudio/LICENSE; do
+            test -s "$doc/licenses/$f" || { echo "::error::missing licence text $f"; exit 1; }
+          done
+          # whisper.cpp's shared libraries come from the install, not the build tree.
+          ldd "$RUNNER_TEMP/ee/bin/emotionedge" > "$RUNNER_TEMP/ldd.txt"
+          grep -E 'libwhisper|libggml' "$RUNNER_TEMP/ldd.txt"
+          if grep -E 'libwhisper|libggml' "$RUNNER_TEMP/ldd.txt" | grep -v "$RUNNER_TEMP/ee/"; then
+            echo "::error::the installed binary loads whisper.cpp from outside the install"; exit 1
+          fi
+          "$RUNNER_TEMP/ee/bin/emotionedge" stages > /dev/null
 
   desktop:
     name: linux / desktop app
@@ -189,6 +221,15 @@ jobs:
             --set asr.engine=scripted --set asr.script="$RUNNER_TEMP/demo/input.script.json" \
             --input "$RUNNER_TEMP/demo/input.wav" --mute --screenshot "$RUNNER_TEMP/desktop.png"
           test -s "$RUNNER_TEMP/desktop.png"
+      - name: Install, and run the installed app on its own (its font from the install)
+        run: |
+          cmake --install build --prefix "$RUNNER_TEMP/ee"
+          mv build build.hidden
+          xvfb-run -a -s "-screen 0 1400x900x24" "$RUNNER_TEMP/ee/bin/emotionedge-desktop" \
+            --config "$RUNNER_TEMP/ee/share/emotionedge/config/pipeline.yaml" \
+            --set asr.engine=scripted --set asr.script="$RUNNER_TEMP/demo/input.script.json" \
+            --input "$RUNNER_TEMP/demo/input.wav" --mute --screenshot "$RUNNER_TEMP/desktop-installed.png"
+          test -s "$RUNNER_TEMP/desktop-installed.png"
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-screenshot

@@ -44,12 +44,14 @@ if(EE_WITH_WHISPER)
         # ggml's CUDA backend. Set CMAKE_CUDA_ARCHITECTURES (e.g. "native", or 120 for Blackwell)
         # to compile for your GPU only; ggml's default list takes much longer.
         set(GGML_CUDA ${EE_WHISPER_CUDA} CACHE BOOL "" FORCE)
-        # Keep whisper/ggml static so their option(BUILD_SHARED_LIBS) does not leak into our targets.
+        # whisper.cpp's old minimum CMake version makes its option(BUILD_SHARED_LIBS) ignore this
+        # (policy CMP0077 OLD), so whisper and ggml build as shared libraries. `cmake --install`
+        # installs them with the apps (cmake/Install.cmake).
         set(BUILD_SHARED_LIBS OFF)
         FetchContent_Declare(whisper
             # v1.9.4
             URL https://github.com/ggml-org/whisper.cpp/archive/927cfce34f31707e17f2bff35c349632fb9e2c3a.tar.gz)
-        FetchContent_MakeAvailable(whisper)
+        ee_make_available(whisper)
         # Third-party headers: keep our warning flags (and -Werror) out of them.
         if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
             foreach(_t whisper ggml ggml-base ggml-cpu ggml-cuda)
@@ -89,7 +91,7 @@ if(EE_WITH_CTRANSLATE2)
         FetchContent_Declare(sentencepiece
             URL https://github.com/google/sentencepiece/archive/refs/tags/v0.2.0.tar.gz
             URL_HASH SHA256=9970f0a0afee1648890293321665e5b2efa04eaec9f1671fcf8048f456f5bb86)
-        FetchContent_MakeAvailable(sentencepiece)
+        ee_make_available(sentencepiece)
         unset(CMAKE_POLICY_VERSION_MINIMUM)
         foreach(_t sentencepiece-static sentencepiece_train-static)
             target_compile_options(${_t} PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-w>)
@@ -170,7 +172,7 @@ if(EE_WITH_WEBSOCKET)
         FetchContent_Declare(ixwebsocket
             URL https://github.com/machinezone/IXWebSocket/archive/refs/tags/v12.0.1.tar.gz
             URL_HASH SHA256=d23bdc91dbfe2b9ae13c322d539392d7a6b8b506560f41c90e227fa0f86a2405)
-        FetchContent_MakeAvailable(ixwebsocket)
+        ee_make_available(ixwebsocket)
         if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
             set_target_properties(ixwebsocket PROPERTIES SYSTEM ON)
         endif()
@@ -249,7 +251,8 @@ if(EE_WITH_DESKTOP)
     FetchContent_Declare(harfbuzz
         URL https://github.com/harfbuzz/harfbuzz/releases/download/14.5.1/harfbuzz-14.5.1.tar.xz
         URL_HASH SHA256=7e2fa4e8c7c98e8d8140671f5772542afaaa6acccfbd746506886b6d85f7f8d6)
-    FetchContent_MakeAvailable(imgui glfw harfbuzz)
+    FetchContent_MakeAvailable(imgui)  # sources only: no CMake project is added
+    ee_make_available(glfw harfbuzz)
     foreach(_t glfw harfbuzz)
         if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.25)
             set_target_properties(${_t} PROPERTIES SYSTEM ON)
