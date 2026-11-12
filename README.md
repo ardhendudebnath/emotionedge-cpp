@@ -470,6 +470,34 @@ The measurements used:
 - espeak-ng (GPL-3.0), linked by `EE_WITH_PIPER`, puts binaries that include it under the GPL.
 - This repository has no license of its own yet.
 
+### Install
+
+```bash
+cmake --install build/release --prefix ~/.local     # or /usr/local, /opt/emotionedge, ...
+```
+
+| Installed to | What |
+|---|---|
+| `bin/` | `emotionedge`, and `emotionedge-desktop` when built |
+| `lib/` | whisper.cpp's and ggml's shared libraries, when whisper is built |
+| `share/emotionedge/config/` | the pipeline configs |
+| `share/emotionedge/models/` | `manifest.json` and `fetch_models.py` |
+| `share/emotionedge/fonts/` | the desktop app's caption font |
+| `share/doc/EmotionEdge/` | `THIRD_PARTY_NOTICES.md` and the licence texts |
+
+The apps find their configs and font from their own location, so an install runs without the
+source or build tree. A config in the working directory still comes first.
+
+- **Models:** `python3 ~/.local/share/emotionedge/models/fetch_models.py --pair en-hi` fetches
+  them into the install. To use models kept elsewhere, pass
+  `--set pipeline.models=/path/to/manifest.json`.
+- **Shared libraries:** whisper.cpp builds itself and ggml as shared libraries, and these go to
+  `lib/`. The others (ONNX Runtime, CTranslate2, espeak-ng, gRPC) are not copied. The binaries
+  load them from where they were when the binaries were linked.
+- **`THIRD_PARTY_NOTICES.md`** lists the build's components with their licences. The licence
+  texts of the components compiled into the binaries are installed beside it.
+- **Fetched dependencies** install nothing of their own.
+
 ## Layout
 
 ```
@@ -491,7 +519,8 @@ models/          manifest.json + fetch script (model files are not committed)
 proto/           the gRPC API (emotionedge.v1.Translator)
 ml/              offline Python factory: data, train, distill, export, eval
 tests/           GoogleTest unit + end-to-end "golden audio" tests
-docs/            blueprint -> code map
+docs/            blueprint -> code map, benchmark report, licences
+cmake/           dependencies, backends, install layout and third-party notices
 ```
 
 ## Development

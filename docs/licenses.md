@@ -73,6 +73,8 @@ Distributing binaries brings two duties:
 - The permissive licences (MIT, BSD, zlib, Apache-2.0) require their notices to go with the binary.
 - The GPL-3.0 requires offering the corresponding source.
 
+`cmake --install` takes care of the notices for what is compiled in. It writes `THIRD_PARTY_NOTICES.md` for the build, listing each component and whether it is compiled in or linked, and installs the licence texts of the compiled-in components (README, "Install"). Shared libraries it links, such as ONNX Runtime or espeak-ng, are not installed. Whoever ships them must add their notices.
+
 ## Data
 
 Datasets used to train or tune something that ships, or to measure it:

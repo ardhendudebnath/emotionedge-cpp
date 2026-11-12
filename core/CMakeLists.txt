@@ -24,6 +24,7 @@ set(EE_RUNTIME_SOURCES
     runtime/config.cpp
     runtime/frame.cpp
     runtime/graph.cpp
+    runtime/install_paths.cpp
     runtime/log.cpp
     runtime/model_registry.cpp
     runtime/params.cpp

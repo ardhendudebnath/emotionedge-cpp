@@ -30,6 +30,7 @@
 #include "core/pipeline/builtin_stages.hpp"
 #include "core/pipeline/demo.hpp"
 #include "core/pipeline/session.hpp"
+#include "core/runtime/install_paths.hpp"
 #include "core/runtime/log.hpp"
 #include "core/runtime/model_registry.hpp"
 #include "core/telemetry/telemetry.hpp"
@@ -83,7 +84,7 @@ commands:
   version    Print the version
 
 options:
-  --config FILE        pipeline graph (default: config/pipeline.yaml)
+  --config FILE        pipeline graph (default: config/pipeline.yaml here, else the installed one)
   --set KEY=VALUE      override a setting, e.g. --set translate.engine=ct2 (repeatable)
   --target LANG        target language, e.g. hi, es
   --out DIR            where outputs go (default: out/<command>)
@@ -147,10 +148,14 @@ Args parse_args(int argc, char** argv) {
     return a;
 }
 
+/// --config, else a checkout's config in the working directory, else an installed copy's
+/// (<prefix>/share/emotionedge), else the source tree's this binary was built from.
 fs::path resolve_config(const Args& args) {
     if (args.has("config")) return args.get("config");
-    if (fs::exists("config/pipeline.yaml")) return "config/pipeline.yaml";
-    return EE_DEFAULT_CONFIG;
+    const fs::path data = installed_data_dir(executable_path(), EE_INSTALL_BINDIR, EE_INSTALL_DATADIR);
+    const fs::path installed = data.empty() ? fs::path() : data / "config" / "pipeline.yaml";
+    const fs::path found = first_existing({"config/pipeline.yaml", installed});
+    return found.empty() ? fs::path(EE_DEFAULT_CONFIG) : found;
 }
 
 std::string abs_path(const fs::path& p) { return fs::absolute(p).lexically_normal().generic_string(); }

@@ -36,6 +36,19 @@ option(EE_WITH_GRPC "gRPC streaming server (emotionedge serve --grpc-port): need
 option(EE_WITH_DESKTOP "Desktop app emotionedge-desktop: Dear ImGui + GLFW, HarfBuzz text shaping (needs EE_WITH_MINIAUDIO)" OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+
+# The install layout (cmake/Install.cmake). An installed binary finds the shared libraries
+# installed with it (whisper.cpp's) in ../lib, and ONNX Runtime, CTranslate2 and the others where
+# they were at link time.
+include(GNUInstallDirs)
+set(EE_INSTALL_DATADIR "${CMAKE_INSTALL_DATADIR}/emotionedge")
+if(APPLE)
+    set(CMAKE_INSTALL_RPATH "@loader_path/../${CMAKE_INSTALL_LIBDIR}")
+elseif(UNIX)
+    set(CMAKE_INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+endif()
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
+
 include(Warnings)
 include(Dependencies)
 include(Backends)
@@ -63,6 +76,8 @@ if(EE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+include(Install)
 
 message(STATUS "EmotionEdge ${PROJECT_VERSION}: onnxruntime=${EE_WITH_ONNXRUNTIME} whisper=${EE_WITH_WHISPER} "
                "ctranslate2=${EE_WITH_CTRANSLATE2} piper=${EE_WITH_PIPER} miniaudio=${EE_WITH_MINIAUDIO} "
