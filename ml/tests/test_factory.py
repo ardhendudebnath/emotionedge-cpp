@@ -140,6 +140,17 @@ class ManifestTest(unittest.TestCase):
             if m.get("sha256"):
                 self.assertRegex(m["sha256"], r"^[0-9a-f]{64}$")
 
+    def test_every_model_states_its_license_and_is_documented(self):
+        # docs/licenses.md and models/README.md list every model, so a new one can't ship unlisted.
+        repo = ML.parent
+        manifest = json.loads((repo / "models" / "manifest.json").read_text(encoding="utf-8"))
+        docs = {name: (repo / name).read_text(encoding="utf-8") for name in ("docs/licenses.md", "models/README.md")}
+        for m in manifest["models"]:
+            license = m.get("license", "")
+            self.assertTrue(license and not license.lower().startswith(("see ", "unknown")), m["id"])
+            for name, text in docs.items():
+                self.assertIn(f"`{m['id']}`", text, f"{m['id']} is missing from {name}")
+
 
 class ControlPrefixTest(unittest.TestCase):
     def test_training_prefix_matches_the_runtime_format(self):

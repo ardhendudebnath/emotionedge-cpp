@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "EmotionEdge model registry (blueprint 'Model Registry'). Files live next to this manifest; fetch them with models/fetch_models.py. The runtime verifies size and SHA-256 before loading. An empty sha256 is pinned on first fetch (fetch_models.py --pin). Check every license before shipping: NLLB-200 weights are non-commercial (CC-BY-NC-4.0).",
+  "description": "EmotionEdge model registry (blueprint 'Model Registry'). Files live next to this manifest; fetch them with models/fetch_models.py. The runtime verifies size and SHA-256 before loading. An empty sha256 is pinned on first fetch (fetch_models.py --pin). Check every license before shipping: NLLB-200 weights are non-commercial (CC-BY-NC-4.0). docs/licenses.md says what each build may be used for.",
   "models": [
     {
       "id": "vad.silero.v6",
@@ -64,7 +64,7 @@
       "languages": ["hi"],
       "devices": ["cpu"],
       "precision": "fp32",
-      "license": "see MODEL_CARD in rhasspy/piper-voices",
+      "license": "MIT (rhasspy/piper-voices); training data CC-BY-NC-SA-4.0 per the voice's MODEL_CARD: non-commercial",
       "source": "https://huggingface.co/rhasspy/piper-voices/resolve/main/hi/hi_IN/pratham/medium/hi_IN-pratham-medium.onnx",
       "sidecars": ["https://huggingface.co/rhasspy/piper-voices/resolve/main/hi/hi_IN/pratham/medium/hi_IN-pratham-medium.onnx.json"]
     },
@@ -78,7 +78,7 @@
       "languages": ["en"],
       "devices": ["cpu"],
       "precision": "fp32",
-      "license": "see MODEL_CARD in rhasspy/piper-voices",
+      "license": "MIT (rhasspy/piper-voices); training data under the Blizzard 2013 Lessac license: research only",
       "source": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
       "sidecars": ["https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"]
     },
@@ -118,7 +118,7 @@
       "languages": ["*"],
       "devices": ["cpu", "cuda"],
       "precision": "fp32",
-      "license": "FunASR model license (emotion2vec/emotion2vec_plus_base): attribution required",
+      "license": "FunASR Model License 1.1 (emotion2vec/emotion2vec_plus_base): attribution required",
       "source": "convert:ml/export/export_emotion2vec_onnx.py"
     },
     {
@@ -131,7 +131,7 @@
       "languages": ["en"],
       "devices": ["cpu"],
       "precision": "int8",
-      "license": "none stated (j-hartmann/emotion-english-distilroberta-base): clear before shipping",
+      "license": "none stated (j-hartmann/emotion-english-distilroberta-base): shipping it needs the author's permission",
       "source": "convert:ml/export/export_lexical_onnx.py --int8"
     }
   ],
