@@ -111,9 +111,24 @@ Busy time per stage at 8 synchronized sessions, against 1 session:
   - One A/B (apart) was cut short when the laptop came off mains during its third block, so it has 4 runs per arm.
   - An earlier attempt was discarded: a k3s cluster in WSL started part-way through and took the CPU and GPU (10–16 s first audio in both arms). The A/B script now checks for a quiet machine before every arm.
 
+## On battery
+
+Every comparison above was made on mains power: on battery, the same runs vary more and slow down as the battery drains, so A/Bs wait for mains. The baseline was also run once on battery, as this laptop is set up when unplugged (power plan "Silent"), while the battery fell from 46% to 35%.
+
+| Sessions | First audio p50, sync / staggered: battery | p95, sync / staggered: battery | First audio p50, sync / staggered: mains |
+|---|---|---|---|
+| 1 | 422 / 360 ms | 440 / 492 ms | 330 / 318 ms |
+| 3 | 760 / 608 ms | 828 / 712 ms | 586 / 420 ms |
+| 8 | 1,662 / 3,850 ms | 3,482 / 12,708 ms | 1,050–1,162 / 1,918–2,488 ms |
+
+- **Comparisons:** the mains figures at 8 sessions are from the B2 runs, with emotion2vec+ batched as on battery. At 1 and 3 sessions they are from the baseline (#29); batching does not apply to 1 session.
+- **One session or a few:** about 30% slower on battery.
+- **Eight:** the median is 1.5× (synchronized) to 2× (staggered) that on mains, the staggered p95 reaches 12.7 s, and throughput drops from about 2.2 to 1.9 utterances/s.
+- **Caveats:** one run per cell. Battery and the "Silent" plan go together on this laptop, so their effects can't be separated.
+- **Result:** a server meant for several sessions needs mains power.
+
 ## Not covered, and open
 
-- **Battery:** only mains-power runs are reported. On battery the GPU throttles 2–3× and gets worse as the battery drains, which made earlier battery runs unrepeatable. Comparisons were therefore made on mains only, and runs wait for it.
 - **GPU contention with staggered starts:** NLLB slows while other sessions' ASR, emotion2vec+ and TTS share the GPU. The final translation pass is the largest step users wait on at 8 sessions. Reordering NLLB doesn't help (B2), so the lever left is the capacity limit (B4).
 - **Emotion-faithful MT data:** a local 8B LLM fell short of the NLLB teacher on round-trip meaning and emotion (#30); a stronger model or Hindi speakers are needed.
 
