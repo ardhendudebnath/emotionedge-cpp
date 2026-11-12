@@ -524,11 +524,13 @@ unpacked `libc.so` and `libm.so` linker scripts at the copy.
   under `-Werror` (GCC 13.3).
 - **Under QEMU 8.2:** all tests pass, the golden-audio and threaded real-time ones included, so
   the offline pipeline gives the same audio as on x86-64.
-- **CI** builds and tests it natively on GitHub's ARM runner, and cross-compiles it with the
-  toolchain file.
-- **Still to come:** the real engines need aarch64 builds of ONNX Runtime, CTranslate2 and
-  whisper.cpp, and on a Jetson, CUDA from JetPack. That step needs the board or its JetPack
-  sysroot.
+- **whisper.cpp** (`-DEE_WITH_WHISPER=ON`) also builds for aarch64, with its CPU backend
+  (NEON). Under QEMU, jfk.wav through the real base model gave the same transcripts as on
+  x86-64, apart from one period. That is float rounding between NEON and AVX.
+- **CI** builds and tests it natively on GitHub's ARM runner, whisper.cpp included, and
+  cross-compiles it with the toolchain file.
+- **Still to come:** the other real engines need aarch64 builds of ONNX Runtime and CTranslate2,
+  and on a Jetson, CUDA from JetPack. That step needs the board or its JetPack sysroot.
 
 ## Roadmap
 

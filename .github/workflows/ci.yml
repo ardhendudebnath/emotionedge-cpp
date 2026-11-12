@@ -48,8 +48,9 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
+      # With whisper.cpp (its CPU backend, NEON): the first real engine on ARM.
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DEE_WARNINGS_AS_ERRORS=ON -DEE_WITH_WHISPER=ON
       - name: Build
         run: cmake --build build -j 4
       - name: Test
