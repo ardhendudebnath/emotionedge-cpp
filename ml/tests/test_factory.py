@@ -231,5 +231,53 @@ class MtCorpusTest(unittest.TestCase):
         self.assertFalse(eval_mt.leaks("मुझे बहुत खेद है।"))
 
 
+class JudgeCalibrationTest(unittest.TestCase):
+    def test_four_way_and_prototype_measures(self):
+        import eval_judges as ej
+
+        p = ej.four_way({"neutral": 0.1, "anger": 0.2, "joy": 0.1, "sadness": 0.1, "fear": 0.5})
+        self.assertAlmostEqual(sum(p.values()), 1.0)
+        self.assertAlmostEqual(p["anger"], 0.4)  # fear is dropped, the four renormalised
+        for c in ej.FOUR:
+            self.assertEqual(ej.nearest(es.PROTOTYPES[c]), c)
+        self.assertAlmostEqual(ej.along((0.0, 0.0, 0.0), "sadness"), 0.0)
+        self.assertAlmostEqual(ej.along(es.PROTOTYPES["anger"], "anger"), math.hypot(*es.PROTOTYPES["anger"]))
+        self.assertLess(ej.along(es.PROTOTYPES["joy"], "sadness"), 0.0)
+
+    def test_pairs_match_actor_sentence_and_repetition(self):
+        import eval_judges as ej
+
+        # RAVDESS: modality-channel-emotion-intensity-statement-repetition-actor.
+        verdicts = {
+            "03-01-01-01-01-01-01.wav": {"neutral": 0.7, "anger": 0.1, "joy": 0.1, "sadness": 0.1},
+            "03-01-05-01-01-01-01.wav": {"neutral": 0.1, "anger": 0.8, "joy": 0.0, "sadness": 0.1},  # win
+            "03-01-05-02-01-01-01.wav": {"neutral": 0.8, "anger": 0.1, "joy": 0.0, "sadness": 0.1},  # tie
+            "03-01-04-01-01-01-01.wav": {"neutral": 0.9, "anger": 0.0, "joy": 0.0, "sadness": 0.05},  # loss
+            "03-01-04-01-02-01-01.wav": {"neutral": 0.0, "anger": 0.0, "joy": 0.0, "sadness": 1.0},  # no neutral twin
+        }
+        r = ej.pair_rates(sorted(verdicts), verdicts.get)
+        self.assertEqual(r["n"], 3)
+        self.assertAlmostEqual(r["anger"], 0.75)
+        self.assertAlmostEqual(r["anger/normal"], 1.0)
+        self.assertAlmostEqual(r["anger/strong"], 0.5)
+        self.assertAlmostEqual(r["sadness"], 0.0)
+        self.assertAlmostEqual(r["all"], 0.5)
+        # V·A·D verdicts are compared by their projection onto the emotion's prototype.
+        vad = {"03-01-01-01-01-01-02.wav": (0.0, 0.0, 0.0), "03-01-03-02-01-01-02.wav": (0.2, 0.6, 0.3)}
+        self.assertAlmostEqual(ej.pair_rates(sorted(vad), vad.get)["joy/strong"], 1.0)
+
+    def test_four_way_scores(self):
+        import eval_judges as ej
+
+        s = ej.four_way_scores([("anger", "anger", 0.9), ("anger", "anger", 0.8), ("sadness", "neutral", 0.6),
+                                ("joy", "joy", 0.7)])
+        self.assertAlmostEqual(s["accuracy"], 0.75)
+        self.assertAlmostEqual(s["recall"]["sadness"], 0.0)
+        self.assertAlmostEqual(s["balanced_accuracy"], (1 + 0 + 1) / 3)  # over the classes with clips
+        self.assertNotIn("neutral", s["recall"])
+        self.assertEqual(s["confusion"]["sadness"]["neutral"], 1)
+        self.assertAlmostEqual(s["mean_top_probability"], 0.75)
+
+
 if __name__ == "__main__":
     unittest.main()
