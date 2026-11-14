@@ -28,6 +28,10 @@ namespace ee {
 /// `loop_distinct` distinct, over at least `loop_min_pieces` pieces (`loop_distinct` 0: no
 /// check), is treated as a cut one (TranslationResult::looped). Translations repeat whole 4-grams
 /// rarely; the measured rate is in the README, "Decode limits".
+///
+/// No limit runs past the model's positions (`max_positions`, NLLB's 1024). A long garbled
+/// source, such as whisper's transcript of 15 s of babble, scales the limit past them. If such a
+/// decode loops, CTranslate2 fails at position 1024 instead of reporting a cut.
 struct DecodeLimits {
     float draft_ratio = 2.5f;
     float draft_margin = 24.0f;
@@ -36,6 +40,7 @@ struct DecodeLimits {
     float retry_penalty = 1.2f;
     float loop_distinct = 0.5f;
     std::size_t loop_min_pieces = 12;
+    std::size_t max_positions = 1024;
 
     /// True if `pieces` (a decode's output, without its language and end tokens) repeat
     /// themselves as a loop does.
@@ -48,11 +53,13 @@ struct DecodeLimits {
     }
 
     /// Target tokens: the target prefix (language token, kept words) and the end token included,
-    /// as CTranslate2's max_decoding_length counts them.
+    /// as CTranslate2's max_decoding_length counts them. At most `max_positions`.
     [[nodiscard]] std::size_t limit(bool draft, std::size_t prefix_tokens, std::size_t source_tokens) const noexcept {
         const float ratio = draft ? draft_ratio : final_ratio;
         const float margin = draft ? draft_margin : final_margin;
-        return prefix_tokens + static_cast<std::size_t>(std::ceil(ratio * static_cast<float>(source_tokens) + margin));
+        const std::size_t scaled =
+            prefix_tokens + static_cast<std::size_t>(std::ceil(ratio * static_cast<float>(source_tokens) + margin));
+        return std::min(scaled, max_positions);
     }
 
     [[nodiscard]] static DecodeLimits from(const Params& p) {
@@ -65,6 +72,9 @@ struct DecodeLimits {
         d.loop_distinct = p.real("loop_distinct", d.loop_distinct);
         d.loop_min_pieces =
             static_cast<std::size_t>(std::max<std::int64_t>(4, p.integer("loop_min_pieces", static_cast<std::int64_t>(d.loop_min_pieces))));
+        const std::int64_t positions = p.integer("max_positions", static_cast<std::int64_t>(d.max_positions));
+        if (positions < 2) throw ConfigError("translate max_positions must be >= 2");
+        d.max_positions = static_cast<std::size_t>(positions);
         if (d.draft_ratio <= 0.0f || d.final_ratio <= 0.0f || d.draft_margin < 0.0f || d.final_margin < 0.0f) {
             throw ConfigError("translate decode limits: ratios must be > 0 and margins >= 0");
         }

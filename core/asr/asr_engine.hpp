@@ -25,7 +25,11 @@ struct AsrRequest {
 
 struct AsrResult {
     std::vector<Word> words;  ///< times relative to audio[0]
-    std::string language;     ///< detected (or hinted) language, ISO 639-1
+    std::string language;     ///< the language transcribed in, ISO 639-1
+    /// When this decode detected the language: the most probable one and its probability. It
+    /// differs from `language` when the session's language prior overruled it (LanguagePrior).
+    std::string detected_language;
+    float detected_p = 0.0f;
 };
 
 /// Speech recognizer slot (blueprint 2.1). Engines re-decode the whole utterance on each call;
@@ -36,7 +40,8 @@ public:
     [[nodiscard]] virtual AsrResult transcribe(const AsrRequest& request) = 0;
 };
 
-/// `engine: scripted` (+ `script`) or `whisper` (+ `model`/`model_id`, `threads`, `beam`).
+/// `engine: scripted` (+ `script`) or `whisper` (+ `model`/`model_id`, `threads`, `beam`,
+/// `language_prior`, `language_switch_p`: LanguagePrior).
 [[nodiscard]] std::unique_ptr<IAsrEngine> make_asr_engine(const Params& params, const ModelRegistry* registry);
 
 #if defined(EE_HAVE_WHISPER)

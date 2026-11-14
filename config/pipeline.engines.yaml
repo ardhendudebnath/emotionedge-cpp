@@ -91,7 +91,12 @@ stages:
       # ~35 ms instead of ~230 ms on these 4 cores, with the same transcripts.
       engine: whisper
       model_id: asr.whisper.base.q5_1
-      language: auto          # automatic language ID
+      language: auto          # automatic language ID, held by the session's language prior:
+      # whisper names each utterance's language from its first second, and short shouts and noise
+      # flip it (15 of 212 clean RAVDESS utterances). The session starts in source_language and
+      # moves only when whisper is at least language_switch_p sure of another language
+      # (ml/README.md, "Background noise"). language_prior: off = each utterance on its own.
+      language_switch_p: 0.7
       threads: 4              # blueprint: 4 worker cores
       beam: 1
       audio_ctx: auto         # encoder window sized to the utterance, >= 10 s (0 = full 30 s)

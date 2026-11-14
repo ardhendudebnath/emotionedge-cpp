@@ -31,6 +31,8 @@ private:
     [[nodiscard]] AsrResult transcribe(bool final, bool early = false);
     void emit_final(const AsrResult& result);
     void emit_partial(const AsrResult& result);
+    /// Logs and counts a decode's language detection, if it ran one (LanguagePrior).
+    void note_language(const AsrResult& result);
     void emit(const std::vector<Word>& words, std::uint32_t stable, bool final);
 
     StageContext* ctx_ = nullptr;
@@ -55,6 +57,7 @@ private:
     AsrResult early_;  ///< the final decode started in the hangover
     telemetry::Counter* kept_ = nullptr;
     telemetry::Counter* wasted_ = nullptr;
+    telemetry::Counter* overruled_ = nullptr;
 };
 
 }  // namespace ee
