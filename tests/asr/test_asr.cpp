@@ -5,6 +5,7 @@
 #include <fstream>
 
 #include "core/asr/asr_stage.hpp"
+#include "core/asr/language_prior.hpp"
 #include "core/asr/local_agreement.hpp"
 #include "core/asr/scripted_engine.hpp"
 #include "support/signals.hpp"
@@ -27,6 +28,47 @@ std::vector<std::string> texts(const std::vector<Word>& ws) {
     std::vector<std::string> out;
     for (const Word& w : ws) out.push_back(w.text);
     return out;
+}
+
+// The session's language holds against unsure detections ("Kids!" heard as Japanese) and gives
+// way to a sure one, which then becomes the session's.
+TEST(LanguagePrior, KeepsTheSessionsLanguageUnlessSureOfAnother) {
+    LanguagePrior prior("en", 0.7f);
+    EXPECT_EQ(prior.choose("ja", 0.55f, true), "en");
+    EXPECT_EQ(prior.choose("en", 0.30f, true), "en");
+    EXPECT_EQ(prior.session(), "en");
+    EXPECT_EQ(prior.choose("hi", 0.93f, false), "hi");  // a tentative decode: transcribed in it,
+    EXPECT_EQ(prior.session(), "en");                    // but the session does not move
+    EXPECT_EQ(prior.choose("hi", 0.93f, true), "hi");
+    EXPECT_EQ(prior.session(), "hi");
+    EXPECT_EQ(prior.choose("ur", 0.50f, true), "hi");  // and now holds against unsure detections
+    EXPECT_EQ(prior.choose("en", 0.60f, true), "hi");
+}
+
+TEST(LanguagePrior, StartsWithoutALanguageAndTakesTheFirstSureOne) {
+    LanguagePrior prior("", 0.8f);
+    EXPECT_EQ(prior.choose("de", 0.40f, true), "de");  // nothing to keep: whisper's choice
+    EXPECT_EQ(prior.session(), "");
+    EXPECT_EQ(prior.choose("en", 0.90f, true), "en");
+    EXPECT_EQ(prior.session(), "en");
+    EXPECT_EQ(prior.choose("de", 0.40f, true), "en");
+}
+
+TEST(LanguagePrior, Params) {
+    Params p;
+    EXPECT_TRUE(LanguagePrior::enabled(p));
+    EXPECT_EQ(LanguagePrior::from(p).session(), "");  // auto: no start
+    EXPECT_FLOAT_EQ(LanguagePrior::from(p).switch_p(), 0.7f);
+    p.set("language_prior", "hi");
+    p.set("language_switch_p", "0.9");
+    const LanguagePrior hi = LanguagePrior::from(p);
+    EXPECT_EQ(hi.session(), "hi");
+    EXPECT_FLOAT_EQ(hi.switch_p(), 0.9f);
+    p.set("language_prior", "off");
+    EXPECT_FALSE(LanguagePrior::enabled(p));
+    p.set("language_prior", "en");
+    p.set("language_switch_p", "1.5");
+    EXPECT_THROW((void)LanguagePrior::from(p), ConfigError);
 }
 
 TEST(LocalAgreement, CommitsWhatTwoConsecutiveHypothesesAgreeOn) {

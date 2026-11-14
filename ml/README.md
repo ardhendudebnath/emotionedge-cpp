@@ -507,6 +507,128 @@ The runtime uses a 1.5 s probe, threshold 0.25, and arms once 3 utterances are e
 - **Echo of the translation:** Kokoro's voices score ≥ 0.59 (median 0.75) against their own
   print at 1.5 s, and the actors score ≤ 0.32 against them. Echo threshold 0.45.
 
+## Background noise (P5)
+
+How much does a noisy room cost? `eval/eval_noise.py` mixes noise into a RAVDESS input and runs
+the whole pipeline on each mix (`pipeline.engines.yaml`, on the GPU).
+- **Input:** 192 clips: every actor saying "Kids are talking by the door" in 8 emotions (strong;
+  neutral at normal), 1.6 s of silence between clips, 17 min in all.
+- **Noise:**
+  - white noise;
+  - pink (1/f) noise;
+  - babble: eight RAVDESS talkers at once, saying the other sentence.
+  It is mixed in at 20, 10, 5 and 0 dB SNR. The SNR counts the speech power over the clips, and
+  the noise runs through the gaps too.
+- **Scores, per clip:**
+  - missed: no utterance at all;
+  - WER;
+  - the emotion read from the voice: the fused label, with a missed clip counting as wrong.
+
+```bash
+python ml/eval/eval_ecs.py build --items data/ravdess.jsonl --out data/ravdess_all.wav --actors $(seq 1 24)
+python ml/eval/eval_noise.py run --wav data/ravdess_all.wav --items data/ravdess.jsonl \
+    --emotionedge build/engines/apps/emotionedge --config config/pipeline.engines.yaml --out out/noise
+```
+
+As shipped before this measurement (automatic language ID on every utterance):
+
+| Input | Missed clips | WER | Emotion read right |
+|---|---|---|---|
+| clean | 0 | 0.076 | 0.625 |
+| white 20 dB | 7 | 0.293 | 0.531 |
+| white 10 dB | 18 | 0.537 | 0.359 |
+| white 5 dB | 33 | 0.660 | 0.260 |
+| white 0 dB | 73 | 0.807 | 0.167 |
+| pink 20 dB | 7 | 0.184 | 0.578 |
+| pink 10 dB | 19 | 0.392 | 0.464 |
+| pink 5 dB | 37 | 0.536 | 0.359 |
+| pink 0 dB | 88 | 0.705 | 0.193 |
+| babble 20 dB | 70 | 3.20 | 0.318 |
+| babble 10 dB | 116 | 5.01 | 0.146 |
+
+What the runs show:
+- **Even 20 dB costs a lot.** WER rises from 0.08 to 0.18–0.29, the emotion is read right less
+  often (0.63 → 0.53–0.58), and 7 clips vanish.
+- **The vanished clips are the VAD's.** On the raw white 20 dB input, Silero alone, fed as the
+  runtime feeds it, misses 11 clips; its probability over the noise averages 0.28. Resetting its
+  recurrent state just before each clip recovers most of them (0 → 38 windows above 0.5 on one),
+  so the state drifts in long noise. That reset knows where the clips are, which the runtime
+  doesn't, so a practical reset still has to be found and measured.
+- **Babble breaks endpointing.** Other people's speech never lets the VAD hear silence, so
+  utterances run to the 15 s cut: a median of 14.9 s at 10 dB, against 1.8 s clean. Whisper
+  transcribes the babble, which gives the WER above 1, and on those long garbled transcripts
+  NLLB's decodes looped. Babble at 5 and 0 dB was not finished: one run took over 12 minutes,
+  and 10 dB already shows the failure. Endpointing on the interpreted speaker's own voice (the
+  ECAPA print the barge-in gate already has) would be the fix.
+- **A looping decode crashed the translation.** The decode limit grows with the source (3
+  tokens per source token, plus 32 for a final), so a 15 s babble transcript scaled it past
+  NLLB's 1024 positions. CTranslate2 then failed at position 1024 instead of reporting a cut.
+  The limit is now held to the model's positions (`max_positions`, 1024). A decode of exactly
+  1024 tokens runs, and 1025 fails.
+- **Language ID flips, even on clean speech.** Whisper detects each utterance's language from its
+  first second, and 15 of 212 clean utterances came out Korean, German, Japanese, Hindi or
+  Turkish ("Kids!" heard as Japanese). In noise there are more (40 of 200 at white 10 dB), and
+  each one is transcribed in the wrong language. Pinning the language to English
+  (`asr.language: en`) cuts WER from 0.076 to 0.042 clean, and by 0.03–0.05 at every noise
+  level; the emotion is unaffected. Pinning gives up every other source language, though; the
+  language prior below doesn't.
+
+### The session's language prior
+
+The asr stage keeps a language for the session (`core/asr/language_prior.hpp`). It starts in the
+pipeline's `source_language`. A detection of another language moves the session there only if
+whisper is at least `language_switch_p` sure of it; otherwise the utterance is transcribed in
+the session's language. The engine now detects the language itself
+(`whisper_lang_auto_detect_with_state`), because whisper_full keeps only the winner. The cost is
+the same encoder pass whisper_full spent on it. `ee_asr_language_overruled_total` counts the
+overruled detections, and `--log debug` shows each one.
+
+**Calibration.** Two sets of whisper's detections, logged with `--log debug`:
+- the RAVDESS mixes, which are all English;
+- synthesised Hindi: 72 sentences from the MT corpus's held-out Hindi (24 short, 24 medium, 24
+  long), spoken by Kokoro's hf_alpha and hm_omega and by Piper's pratham. A Hindi speaker in a
+  session that starts in English should move it.
+
+The rule was replayed over these at every threshold. The table gives the share of utterances
+transcribed in their true language:
+
+| Rule | English clean | English, noise 20/10 dB | Hindi (3 voices) |
+|---|---|---|---|
+| no prior (each utterance on its own) | 0.93 | 0.80–0.89 | 0.51–0.54 |
+| **switch at p ≥ 0.7** | **0.97** | **0.91–0.95** | **0.85–0.95** |
+| switch at p ≥ 0.8 | 0.98 | 0.90–0.97 | 0.56–0.88 |
+| switch after two sure utterances in a row (p ≥ 0.85) | 0.99 | 0.97–0.99 | 0.58–0.70 |
+| pinned to English | 1.00 | 1.00 | 0.00 |
+
+- **Whisper base is weak at naming Hindi.** On its own it calls half the synthesised Hindi
+  Arabic, Urdu, Japanese, Chinese or English. A session that has switched to Hindi holds against
+  those, which is most of the Hindi gain.
+- **Whisper is sometimes sure and wrong**, at up to p 0.99 on noisy English. Requiring two
+  utterances in a row therefore protects English best, but whisper seldom names Hindi twice
+  running, so a Hindi speaker's session seldom switched.
+- **0.7 balances the two.** Thresholds from 0.65 to 0.75 score about the same. At 0.8, two of
+  the three Hindi voices seldom switch.
+
+End to end with the prior at 0.7 (the shipped default):
+
+| Input | WER, automatic | WER, pinned to English | WER, prior |
+|---|---|---|---|
+| clean | 0.076 | 0.042 | 0.053 |
+| white 20 dB | 0.293 | 0.247 | 0.269 |
+| white 10 dB | 0.537 | 0.507 | 0.539 |
+| white 5 dB | 0.660 | 0.625 | 0.661 |
+| pink 20 dB | 0.184 | 0.148 | 0.168 |
+| pink 10 dB | 0.392 | 0.366 | 0.392 |
+| pink 5 dB | 0.536 | 0.510 | 0.539 |
+
+The synthesised Hindi is now transcribed in Hindi for 77 of 90, 100 of 105 and 69 of 75
+utterances; without the prior it was about half. The emotion and the missed clips are as
+before.
+- **At 10 dB and below, WER doesn't move.** The language now comes out right more often (0.80
+  → 0.91 at white 10 dB). But whisper gets those words wrong in English too.
+- **What's left in steady noise is the VAD's and the recognizer's.** That is the next work: the
+  VAD's drifting state, then noise suppression or a larger whisper model.
+
 ## Setup
 
 The metrics, the gate and the manifest tools use only the standard library:

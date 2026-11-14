@@ -398,6 +398,27 @@ What landed:
   canceller is tuned on.
 - **Real hardware is the next test.** A canceller still has to be tuned there.
 
+**Background noise** (1.2, phase 5). `ml/eval/eval_noise.py` mixes white, pink and babble noise
+into 192 RAVDESS clips at set SNRs and runs the whole pipeline on each mix (`ml/README.md`,
+"Background noise"). Noise costs a lot even at 20 dB:
+- WER rises from 0.05 to 0.17–0.27;
+- the voice's emotion is read right less often (0.62 → 0.54–0.57);
+- 7 clips are missed outright.
+
+What the runs found:
+- **The VAD** (Silero) loses speech in steady noise: its recurrent state drifts. This is the next
+  fix. Noise suppression (RNNoise) would need a download.
+- **Babble** (other people talking) never lets the VAD hear silence, so utterances run to the
+  15 s cut. Endpointing on the interpreted speaker's own voice would be the fix.
+- **A looping translation crashed.** On those long garbled transcripts, the decode limit had
+  grown past NLLB's 1024 positions. Fixed: the limit is held to them.
+- **Language ID flipped** on short or noisy utterances: 15 of 212 clean ones came out as Korean,
+  German, Japanese and so on. Fixed: the session's language prior keeps the source language
+  unless whisper is at least 0.7 sure of another one.
+  - Clean WER 0.076 → 0.053.
+  - Synthesised Hindi in an English-started session is now transcribed as Hindi 86–95% of the
+    time, against about half before.
+
 **Learned prosody plan** (phase 4, the blueprint's ECS-trained controller). For sadness, the
 controller's rate, pitch, range and final contour for Kokoro come from a search against the
 consistency judge (`ml/train/learn_controller.py`). The other emotions keep rules v1.
@@ -615,6 +636,8 @@ unpacked `libc.so` and `libm.so` linker scripts at the copy.
      natively in CI and cross-compiled (see "64-bit ARM").
 
    Next:
+   - robustness to noise ("Background noise"): the VAD in steady noise, endpointing in babble,
+     then noise suppression;
    - the real engines on a Jetson (JetPack's CUDA), and Android;
    - before a release, a license for this repository and permission for, or replacements of,
      the models that limit use ([docs/licenses.md](docs/licenses.md)).

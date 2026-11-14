@@ -145,6 +145,21 @@ TEST(DecodeLimits, ScaleWithTheSourceAndHoldDraftsTighter) {
     EXPECT_THROW((void)DecodeLimits::from(r), ConfigError);
 }
 
+// No limit runs past the model's positions: a long garbled source (15 s of babble) would scale
+// it past NLLB's 1024, and a looping decode then fails there instead of being cut.
+TEST(DecodeLimits, NeverPastTheModelsPositions) {
+    const DecodeLimits d;
+    EXPECT_EQ(d.limit(false, 1, 330), 1023u);  // 1 + 3 x 330 + 32 = 1023: under
+    EXPECT_EQ(d.limit(false, 1, 331), 1024u);  // 1026: held to 1024
+    EXPECT_EQ(d.limit(false, 40, 600), 1024u);
+    EXPECT_EQ(d.limit(true, 1, 10), 1u + 49u);  // short sources are untouched
+    Params p;
+    p.set("max_positions", "512");
+    EXPECT_EQ(DecodeLimits::from(p).limit(false, 1, 300), 512u);
+    p.set("max_positions", "1");
+    EXPECT_THROW((void)DecodeLimits::from(p), ConfigError);
+}
+
 // A loop that ends inside the limit: the same 4-grams of pieces over and over, as NLLB's
 // "एक शिक्षक के रूप में एक शिक्षक के रूप में ..." did. A translation seldom repeats one.
 TEST(DecodeLimits, CatchesALoopThatEndsInsideTheLimit) {

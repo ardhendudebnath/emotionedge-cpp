@@ -5,12 +5,17 @@
 #include <algorithm>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "core/asr/asr_engine.hpp"
+#include "core/asr/language_prior.hpp"
 #include "core/runtime/log.hpp"
 #include "core/runtime/shared_cache.hpp"
 
@@ -80,6 +85,7 @@ public:
                 throw ConfigError("asr: audio_ctx must be auto or 0.." + std::to_string(kFullAudioCtx));
             }
         }
+        if (LanguagePrior::enabled(params)) prior_.emplace(LanguagePrior::from(params));
         whisper_log_set(forward_whisper_log, nullptr);
         whisper_context_params cparams = whisper_context_default_params();
         // A GPU backend is used only when whisper.cpp was built with one (EE_WHISPER_CUDA,
@@ -140,16 +146,26 @@ public:
             utterance_start_s_ = r.utterance_start_s;
             utterance_language_.clear();
         }
-        language_ = !detect ? std::string(r.language)
-                            : (utterance_language_.empty() ? std::string("auto") : utterance_language_);
-        wp.language = language_.c_str();  // "auto" = automatic language ID
+        AsrResult out;
+        if (!detect) {
+            language_ = r.language;
+        } else if (!utterance_language_.empty()) {
+            language_ = utterance_language_;
+        } else if (prior_ && !r.audio.empty()) {
+            // Detected here, not inside whisper_full, which keeps only the winner: the prior needs
+            // its probability. The cost is the same encoder pass whisper_full spends on it.
+            std::tie(out.detected_language, out.detected_p) = detect_language(r.audio);
+            language_ = prior_->choose(out.detected_language, out.detected_p, !r.tentative);
+        } else {
+            language_ = "auto";
+        }
+        wp.language = language_.c_str();  // "auto" = whisper_full's own language ID
         wp.detect_language = false;       // true would detect and stop without transcribing
 
         whisper_context* ctx = ctx_.get();
         if (whisper_full_with_state(ctx, state_, wp, r.audio.data(), static_cast<int>(r.audio.size())) != 0) {
             throw std::runtime_error("whisper_full failed");
         }
-        AsrResult out;
         const int lang = whisper_full_lang_id_from_state(state_);
         out.language = lang >= 0 ? whisper_lang_str(lang) : language_;
         // A tentative decode's language, detected from a fragment, must not stick to the
@@ -179,6 +195,18 @@ public:
     }
 
 private:
+    /// The most probable language of `audio`, and its probability.
+    std::pair<std::string, float> detect_language(std::span<const float> audio) {
+        whisper_context* ctx = ctx_.get();
+        if (whisper_pcm_to_mel_with_state(ctx, state_, audio.data(), static_cast<int>(audio.size()), threads_) != 0) {
+            throw std::runtime_error("whisper: mel spectrogram failed");
+        }
+        std::vector<float> probs(static_cast<std::size_t>(whisper_lang_max_id() + 1), 0.0f);
+        const int id = whisper_lang_auto_detect_with_state(ctx, state_, 0, threads_, probs.data());
+        if (id < 0) throw std::runtime_error("whisper: language detection failed");
+        return {whisper_lang_str(id), probs[static_cast<std::size_t>(id)]};
+    }
+
     std::shared_ptr<whisper_context> ctx_;  ///< shared weights
     whisper_state* state_ = nullptr;        ///< this engine's decoder
     int threads_;
@@ -186,7 +214,8 @@ private:
     int audio_ctx_ = -1;  ///< -1 = auto
     std::string language_;
     double utterance_start_s_ = -1.0;
-    std::string utterance_language_;  ///< language detected for the current utterance
+    std::string utterance_language_;     ///< language detected for the current utterance
+    std::optional<LanguagePrior> prior_;  ///< the session's language (language_prior: off = none)
 };
 
 }  // namespace

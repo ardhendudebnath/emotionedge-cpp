@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "core/asr/scripted_engine.hpp"
+#include "core/runtime/log.hpp"
 #include "core/telemetry/telemetry.hpp"
 
 namespace ee {
@@ -31,7 +32,10 @@ void StreamingAsrStage::open(StageContext& ctx) {
     ctx_ = &ctx;
     const Params& p = ctx.params();
     rate_ = ctx.pipeline().sample_rate;
-    engine_.publish(std::shared_ptr<IAsrEngine>(make_asr_engine(p, ctx.services().models)));
+    // The session's language prior starts in the pipeline's source language (LanguagePrior).
+    Params engine_params = p;
+    if (!engine_params.has("language_prior")) engine_params.set("language_prior", ctx.pipeline().source_language);
+    engine_.publish(std::shared_ptr<IAsrEngine>(make_asr_engine(engine_params, ctx.services().models)));
     agreement_ = LocalAgreement(static_cast<int>(p.integer("agreement", 2)));
     partial_interval_ = static_cast<std::size_t>(rate_ * p.integer("partial_interval_ms", 500) / 1000);
     min_partial_ = static_cast<std::size_t>(rate_ * p.integer("min_partial_ms", 1000) / 1000);
@@ -44,6 +48,8 @@ void StreamingAsrStage::open(StageContext& ctx) {
                              "Final passes started in the endpoint hangover and used", {{"stage", "asr"}});
     wasted_ = &metrics.counter("ee_speculative_finals_wasted_total",
                                "Final passes started in the endpoint hangover, dropped as speech resumed", {{"stage", "asr"}});
+    overruled_ = &metrics.counter("ee_asr_language_overruled_total",
+                                  "Utterances whose detected language the session's language prior overruled");
 }
 
 void StreamingAsrStage::process(Frame& f) {
@@ -68,6 +74,7 @@ void StreamingAsrStage::process(Frame& f) {
         if (speculation_.holds()) {  // decoded in the hangover; only quiet audio came since
             kept_->inc();
             if (!early_.language.empty()) language_ = early_.language;
+            note_language(early_);
             emit_final(early_);
         } else {
             emit_final(transcribe(true));
@@ -108,7 +115,15 @@ AsrResult StreamingAsrStage::transcribe(bool final, bool early) {
     const double audio_s = static_cast<double>(audio_.size()) / rate_;
     if (audio_s > 0.0) ctx_->services().telemetry->record_rtf(static_cast<float>(decode_s / audio_s));
     if (!early && !result.language.empty()) language_ = result.language;  // an early final's, if it is used
+    if (!early) note_language(result);
     return result;
+}
+
+void StreamingAsrStage::note_language(const AsrResult& result) {
+    if (result.detected_language.empty()) return;
+    log::debug("asr: utterance ", utterance_, " heard as ", result.detected_language, " (p ", result.detected_p,
+               "), transcribed in ", result.language);
+    if (result.detected_language != result.language) overruled_->inc();
 }
 
 void StreamingAsrStage::emit_final(const AsrResult& result) {

@@ -290,5 +290,28 @@ class JudgeCalibrationTest(unittest.TestCase):
         self.assertAlmostEqual(s["mean_top_probability"], 0.75)
 
 
+class NoiseRobustnessTest(unittest.TestCase):
+    def test_score_session_against_the_clips(self):
+        import eval_noise as en
+
+        clips = [{"id": "03-01-05-02-01-01-01", "label": "angry", "start": 1.0, "end": 4.0},
+                 {"id": "03-01-04-02-01-01-01", "label": "sad", "start": 6.0, "end": 9.0},
+                 {"id": "03-01-03-02-01-01-01", "label": "happy", "start": 11.0, "end": 14.0}]
+
+        def utt(start, end, text, label):
+            return {"source": {"start": start, "end": end, "text": text}, "emotion": {"label": label}}
+
+        session = {"utterances": [
+            utt(1.2, 2.0, "Kids are", "neutral"),                   # clip 1, split in two:
+            utt(2.1, 3.8, "talking by the door.", "anger"),         # the longer part decides: right
+            utt(6.1, 8.9, "Kids are talking by the floor.", "fear"),  # clip 2: one word wrong, emotion wrong
+            utt(9.6, 10.4, "Hey.", "joy"),                          # in a gap: extra
+        ]}  # clip 3: missed
+        s = en.score_session(session, clips)
+        self.assertEqual((s["clips"], s["utterances"], s["missed"], s["extra"]), (3, 4, 1, 1))
+        self.assertAlmostEqual(s["emotion_accuracy"], 1 / 3)  # a missed clip counts as wrong
+        self.assertAlmostEqual(s["wer"], (0 + 1 + 6) / 18)    # the missed clip's 6 words are deletions
+
+
 if __name__ == "__main__":
     unittest.main()
