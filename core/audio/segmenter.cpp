@@ -102,6 +102,7 @@ void SegmenterStage::process(Frame& in) {
         current_.origin = origin_at(pending_pos_);
         current_.samples.assign(pending_.begin() + static_cast<std::ptrdiff_t>(offset),
                                 pending_.begin() + static_cast<std::ptrdiff_t>(offset + window_));
+        detector_->set_phase(tracker_->phase());
         handle_window(detector_->probability(current_.samples));
         offset += window_;
         pending_pos_ += static_cast<std::int64_t>(window_);

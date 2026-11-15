@@ -1,5 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <cstdlib>
+#include <numbers>
+#include <span>
+#include <vector>
+
 #include "core/audio/audio_io.hpp"
 #include "core/audio/segmenter.hpp"
 #include "support/signals.hpp"
@@ -25,6 +31,60 @@ TEST(EndpointTracker, NeedsASustainedOnsetAndAFullHangover) {
     EXPECT_EQ(t.update(0.1f), Action::End);  // 5 quiet windows = 160 ms
     EXPECT_FALSE(t.in_speech());
 }
+
+// The phase the detector is told: Silero refreshes its second state only when Idle (so a reset
+// cannot land on speech) and uses it only outside Speech (so it cannot delay an endpoint).
+TEST(EndpointTracker, ReportsItsPhase) {
+    SegmenterConfig cfg;
+    EndpointTracker t(cfg, 0.032);
+    EXPECT_EQ(t.phase(), SegmenterPhase::Idle);
+    (void)t.update(0.9f);
+    EXPECT_EQ(t.phase(), SegmenterPhase::Onset);
+    (void)t.update(0.1f);
+    EXPECT_EQ(t.phase(), SegmenterPhase::Idle);
+    for (int i = 0; i < 3; ++i) (void)t.update(0.9f);
+    EXPECT_EQ(t.phase(), SegmenterPhase::Speech);
+    for (int i = 0; i < 4; ++i) (void)t.update(0.1f);
+    EXPECT_EQ(t.phase(), SegmenterPhase::Speech);  // the hangover is part of the utterance
+    EXPECT_EQ(t.update(0.1f), Action::End);
+    EXPECT_EQ(t.phase(), SegmenterPhase::Idle);
+}
+
+#if defined(EE_HAVE_ONNXRUNTIME)
+// Silero's refreshed state, on the real model: EE_SILERO_MODEL=<silero_vad.onnx>.
+TEST(SileroDetector, RefreshNeverLowersTheCarriedStatesProbability) {
+    const char* model = std::getenv("EE_SILERO_MODEL");
+    if (model == nullptr) GTEST_SKIP() << "set EE_SILERO_MODEL to run";
+    const auto make = [&](const char* refresh_s) {
+        Params p;
+        p.set("detector", "silero");
+        p.set("model", model);
+        p.set("refresh_s", refresh_s);
+        return make_speech_detector(p, nullptr, 16000);
+    };
+    // 12 s of noise with tone bursts: anything will do, these are properties of the scheme.
+    std::vector<float> audio = test::white_noise(12.0, 16000, 0.05f, 7);
+    for (std::size_t i = 0; i < audio.size(); ++i) {
+        const float t = static_cast<float>(i) / 16000.0f;
+        if ((i / 16000) % 3 == 1) audio[i] += 0.3f * std::sin(2.0f * std::numbers::pi_v<float> * 220.0f * t);
+    }
+    auto off = make("0");
+    auto onset = make("1");   // never idle: its fresh state is never reset, so it equals the carried one
+    auto speech = make("1");  // in speech: the carried state alone
+    auto idle = make("1");    // always idle: reset every second, the larger of the two
+    const std::size_t w = off->window();
+    for (std::size_t start = 0; start + w <= audio.size(); start += w) {
+        const std::span<const float> window(audio.data() + start, w);
+        onset->set_phase(SegmenterPhase::Onset);
+        speech->set_phase(SegmenterPhase::Speech);
+        idle->set_phase(SegmenterPhase::Idle);
+        const float carried = off->probability(window);
+        EXPECT_FLOAT_EQ(onset->probability(window), carried) << start;
+        EXPECT_FLOAT_EQ(speech->probability(window), carried) << start;
+        EXPECT_GE(idle->probability(window), carried) << start;
+    }
+}
+#endif
 
 TEST(EndpointTracker, SplitsOverlongUtterances) {
     SegmenterConfig cfg;

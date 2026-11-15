@@ -553,7 +553,7 @@ What the runs show:
   runtime feeds it, misses 11 clips; its probability over the noise averages 0.28. Resetting its
   recurrent state just before each clip recovers most of them (0 → 38 windows above 0.5 on one),
   so the state drifts in long noise. That reset knows where the clips are, which the runtime
-  doesn't, so a practical reset still has to be found and measured.
+  doesn't. The practical fix is below ("Silero in steady noise").
 - **Babble breaks endpointing.** Other people's speech never lets the VAD hear silence, so
   utterances run to the 15 s cut: a median of 14.9 s at 10 dB, against 1.8 s clean. Whisper
   transcribes the babble, which gives the WER above 1, and on those long garbled transcripts
@@ -628,6 +628,79 @@ before.
   → 0.91 at white 10 dB). But whisper gets those words wrong in English too.
 - **What's left in steady noise is the VAD's and the recognizer's.** That is the next work: the
   VAD's drifting state, then noise suppression or a larger whisper model.
+
+### Silero in steady noise
+
+The candidates were compared offline first, in a model of the runtime: the front end's AGC (20 ms
+blocks), Silero v6 on 32 ms windows, and the segmenter's EndpointTracker. It reproduces the
+pipeline's missed clips (7/18/7/19 in white and pink noise at 20/10 dB, against 7/18/7/19 end to
+end), so each candidate could be tried in minutes:
+
+| Candidate | clean | white 20 | white 10 | pink 20 | pink 10 | Utterances ending later |
+|---|---|---|---|---|---|---|
+| Silero as it runs (missed clips) | 0 | 7 | 18 | 7 | 19 | – |
+| lower thresholds (on/off 0.3)† | 0 | 7 | 21 | 6 | 25 | – |
+| reset the state after 1 s without speech† | 4 | 10 | 23 | – | – | – |
+| two states reset in turn, every 8 s | 3 | 3 | 10 | 4 | 9 | – |
+| **carried state + one reset every 4 s, max of the two** | 0 | 4 | 11 | 2 | 9 | 62 of 192 clean, +29 ms; +47 to +157 ms in noise |
+| **… the fresh state only to start an utterance** | **0** | **4** | **10** | **2** | **9** | **1 of 192** |
+
+† An earlier run of the model, without the AGC, which counted a clip as missed only if no
+utterance touched it. In that run, Silero as it runs missed 0, 11, 27, 9 and 28.
+
+What this shows:
+- **A freshly reset state is more conservative.** On its own it loses quiet clips on clean
+  speech, which a state that has heard speech catches. So the carried state stays, and the fresh
+  one is added beside it.
+- **It must never be reset on speech.** It is reset only between utterances, not during one or
+  while an onset is being counted, and it is ignored for 500 ms after each reset while it settles.
+- **It must not decide where an utterance ends.** It stays above the off threshold longer, so
+  ending on the max delayed endpoints: by 29 ms on average on clean speech, by up to 157 ms in
+  noise. That is latency. Used only to start an utterance, it leaves the endpoints where they were.
+- **Thresholds and noise-floor detectors were weaker.** Lower thresholds recover only a few clips,
+  because the missed clips' probability sits near 0, not just under 0.5. The energy detector
+  helps in white noise, but at its default it fires on pink noise between the clips. Real rooms
+  add door slams and keyboard clicks, which Silero is built to reject.
+- **Babble is not this problem.** The AGC makes it worse: without it, babble at 20 dB lost 18–20
+  clips instead of 71. But capping the gain at 6 dB still lost 60. Silero's verdict on background
+  talkers flips within a few dB of level, so babble wants endpointing on the speaker's own
+  voice, not AGC tuning.
+
+The runtime's Silero keeps the two states (`refresh_s: 4`, `refresh_warmup_ms: 500`;
+`core/audio/silero_detector.cpp`). The segmenter tells it its phase (idle, onset, speech) before
+each window. End to end, against the build before it (both with the language prior):
+
+| Input | Missed clips | WER | Emotion read right |
+|---|---|---|---|
+| clean | 0 → 0 | 0.053 → 0.056 | 0.615 → 0.615 |
+| white 20 dB | 7 → **4** | 0.269 → 0.260 | 0.536 → 0.536 |
+| white 10 dB | 18 → **11** | 0.539 → 0.535 | 0.354 → 0.359 |
+| white 5 dB | 33 → **27** | 0.661 → 0.669 | 0.255 → 0.260 |
+| pink 20 dB | 7 → **2** | 0.168 → 0.163 | 0.573 → 0.568 |
+| pink 10 dB | 19 → **9** | 0.392 → 0.385 | 0.474 → 0.490 |
+| pink 5 dB | 37 → **22** | 0.539 → 0.544 | 0.354 → 0.370 |
+| babble 20 dB (utterances outside the clips: 25 → **170**) | 70 → 50 | 3.20 → 2.09 | 0.318 → 0.365 |
+
+- **The missed clips fall from 121 to 75 over the six noisy inputs**, by 18% (white 5 dB) to 71%
+  (pink 20 dB). Each recovered clip is an utterance that now gets translated at all.
+- **Babble has a cost.** The fresh state hears the background talkers too, so 170 utterances now
+  start between the clips, against 25. Each would be translated, about one every 6 s of the
+  17 min. A stricter bar for the fresh state is a straight trade, measured in the model:
+
+  | Fresh state may start an utterance at | Babble 20 dB: utterances between clips | Steady noise (4 inputs): missed |
+  |---|---|---|
+  | (no fresh state) | 26 | 51 |
+  | p ≥ 0.5 (shipped) | 172 | 26 |
+  | p ≥ 0.85 | 106 | 34 |
+  | p ≥ 0.95 | 64 | 42 |
+
+  Babble is speech, so a detector that hears speech better hears it too. Only the speaker's voice
+  can tell them apart: that is the next step, and it would also drop these utterances. Until then,
+  `refresh_s: 0` keeps the old behaviour in babble-heavy places.
+- **WER barely moves.** Whisper base gets most of the recovered clips wrong too, so what remains
+  is the recognizer's: noise suppression or a larger model.
+- **On clean speech** nothing is lost and the endpoints hold: every utterance ends where it did,
+  and 31 start earlier. The WER difference is 3–4 words of 1,152.
 
 ## Setup
 

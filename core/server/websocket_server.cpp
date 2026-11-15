@@ -74,7 +74,7 @@ public:
                           {"output_rate", r.output_rate},
                           {"source_language", r.source_language},
                           {"target_language", r.target_language}}
-                         .dump());
+                         .dump(-1, ' ', false, json::error_handler_t::replace));
     }
     void event(std::string_view json_text) override { ws_.sendText(std::string(json_text)); }
     void audio(std::span<const std::int16_t> pcm) override {

@@ -11,6 +11,13 @@
 
 namespace ee {
 
+/// Where the segmenter is, as of the window before the next probability() call.
+enum class SegmenterPhase {
+    Idle,    ///< between utterances
+    Onset,   ///< counting the windows that may start one
+    Speech,  ///< inside an utterance (its hangover too)
+};
+
 /// Frame-level speech/silence decision (blueprint 1.3; Silero VAD in production).
 class ISpeechDetector {
 public:
@@ -20,6 +27,9 @@ public:
     /// Speech probability for exactly window() samples.
     virtual float probability(std::span<const float> window) = 0;
     virtual void reset() = 0;
+    /// Silero refreshes its second state only when Idle, and uses it only to start an
+    /// utterance, never to keep one going.
+    virtual void set_phase(SegmenterPhase /*phase*/) {}
 };
 
 /// Model-free detector: frame energy against an adaptive noise floor (the minimum over the last
@@ -57,6 +67,20 @@ private:
 
 #if defined(EE_HAVE_ONNXRUNTIME)
 /// Silero VAD v5/v6 ONNX (512-sample windows at 16 kHz with 64 samples of context).
+///
+/// In steady background noise Silero's recurrent state drifts, and speech it would have heard
+/// with a fresher state goes undetected. So it keeps two states over the same audio:
+/// - one carried for the whole stream, as Silero is meant to run;
+/// - one reset every `refresh_s` (default 4; 0 = off) between utterances, and ignored for
+///   `refresh_warmup_ms` (500) after each reset, while it settles.
+///
+/// Outside an utterance the probability is the larger of the two, so either state can start
+/// one. Inside it, the carried state alone decides where it ends. The fresh state stays above
+/// the off threshold longer, which delayed the endpoint by 30-160 ms on average. A freshly reset
+/// state alone is more conservative and lost quiet clips on clean speech, so the carried state
+/// stays. On RAVDESS in white and pink noise the missed utterances fell from 121 to 75, with none
+/// lost and the endpoints unmoved on clean speech. In babble the fresh state hears the other
+/// talkers too, and more utterances start between the speaker's (ml/README.md, "Background noise").
 [[nodiscard]] std::unique_ptr<ISpeechDetector> make_silero_detector(const std::string& model_path,
                                                                     const Params& params,
                                                                     const ModelRegistry* registry,

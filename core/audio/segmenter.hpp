@@ -37,6 +37,11 @@ public:
     /// Windows since the last window at or above threshold_off (the hangover so far).
     [[nodiscard]] int trailing_quiet_windows() const noexcept { return quiet_run_; }
     [[nodiscard]] int onset_windows() const noexcept { return onset_run_; }
+    /// Between utterances, counting an onset, or inside an utterance (for the detector).
+    [[nodiscard]] SegmenterPhase phase() const noexcept {
+        if (in_speech_) return SegmenterPhase::Speech;
+        return onset_run_ > 0 ? SegmenterPhase::Onset : SegmenterPhase::Idle;
+    }
 
 private:
     SegmenterConfig cfg_;

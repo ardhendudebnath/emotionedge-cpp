@@ -54,6 +54,13 @@ stages:
       model_id: vad.silero.v6
       device: cpu
       threads: 1              # a 32 ms window is too small to split across workers
+      # In steady background noise Silero's recurrent state drifts and it stops hearing speech.
+      # A second state, reset every refresh_s between utterances, runs beside the carried one,
+      # and may start an utterance (the carried state alone ends it). On RAVDESS in white and pink
+      # noise the missed utterances fell from 121 to 75, with none lost on clean speech
+      # (ml/README.md, "Background noise"). In babble it also hears the other talkers: 170
+      # utterances started between the speaker's, against 25. 0 = the carried state alone.
+      refresh_s: 4
       hangover_ms: 160
       preroll_ms: 200
       # One speaker being interpreted: the speaker's next phrase must not cancel the translation

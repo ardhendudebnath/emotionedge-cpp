@@ -18,6 +18,7 @@
 #include "core/asr/language_prior.hpp"
 #include "core/runtime/log.hpp"
 #include "core/runtime/shared_cache.hpp"
+#include "core/runtime/utf8.hpp"
 
 namespace ee {
 
@@ -190,6 +191,9 @@ public:
                 }
             }
         }
+        // Byte-level tokens: a decode can end or turn mid-character (babble made whisper
+        // hallucinate CJK that way). Half characters are dropped, not passed downstream.
+        for (Word& w : out.words) w.text = valid_utf8(w.text);
         std::erase_if(out.words, [](const Word& w) { return w.text.empty(); });
         return out;
     }

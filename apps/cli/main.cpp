@@ -687,10 +687,11 @@ int cmd_emotion(const Args& args) {
                             {{"vad", {fused.vad.v, fused.vad.a, fused.vad.d}},
                              {"label", std::string(to_string(fused.label))},
                              {"confidence", fused.confidence}}}};
+        constexpr auto kReplace = nlohmann::json::error_handler_t::replace;  // invalid UTF-8 in a manifest
         if (out_file.is_open()) {
-            out_file << row.dump() << '\n';
+            out_file << row.dump(-1, ' ', false, kReplace) << '\n';
         } else {
-            std::printf("%s\n", row.dump(2).c_str());
+            std::printf("%s\n", row.dump(2, ' ', false, kReplace).c_str());
         }
     }
     if (out_file.is_open()) std::printf("wrote %zu predictions to %s\n", items.size(), abs_path(args.get("out")).c_str());
