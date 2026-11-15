@@ -283,7 +283,8 @@ std::string to_session_json(const std::vector<UtteranceRecord>& records, const P
         }
         root["stage_time"] = std::move(stages);
     }
-    return root.dump(2);
+    // As event_json: half a character from the ASR must not cost the whole export.
+    return root.dump(2, ' ', false, json::error_handler_t::replace);
 }
 
 }  // namespace ee

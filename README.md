@@ -406,10 +406,18 @@ into 192 RAVDESS clips at set SNRs and runs the whole pipeline on each mix (`ml/
 - 7 clips are missed outright.
 
 What the runs found:
-- **The VAD** (Silero) loses speech in steady noise: its recurrent state drifts. This is the next
-  fix. Noise suppression (RNNoise) would need a download.
+- **The VAD** (Silero) lost speech in steady noise, because its recurrent state drifts. Mostly
+  fixed: a second state, refreshed every 4 s between utterances, can start utterances the
+  drifting one misses. Missed utterances in white and pink noise fell from 121 to 75, with none
+  lost and the endpoints unmoved on clean speech. In babble the fresh state also hears the other
+  talkers, so 170 utterances started between the speaker's, against 25 (`refresh_s: 0` turns it
+  off). What steady noise still costs is mostly the recognizer's; noise suppression (RNNoise)
+  would need a download.
 - **Babble** (other people talking) never lets the VAD hear silence, so utterances run to the
-  15 s cut. Endpointing on the interpreted speaker's own voice would be the fix.
+  15 s cut. Endpointing on the interpreted speaker's own voice would be the fix. That would also
+  drop the other talkers' utterances.
+- **A half character from whisper** (babble made it hallucinate CJK) broke the session's JSON
+  export. Fixed: whisper's words are kept valid UTF-8, and the export replaces what isn't.
 - **A looping translation crashed.** On those long garbled transcripts, the decode limit had
   grown past NLLB's 1024 positions. Fixed: the limit is held to them.
 - **Language ID flipped** on short or noisy utterances: 15 of 212 clean ones came out as Korean,
@@ -636,8 +644,7 @@ unpacked `libc.so` and `libm.so` linker scripts at the copy.
      natively in CI and cross-compiled (see "64-bit ARM").
 
    Next:
-   - robustness to noise ("Background noise"): the VAD in steady noise, endpointing in babble,
-     then noise suppression;
+   - robustness to noise ("Background noise"): endpointing in babble, then noise suppression;
    - the real engines on a Jetson (JetPack's CUDA), and Android;
    - before a release, a license for this repository and permission for, or replacements of,
      the models that limit use ([docs/licenses.md](docs/licenses.md)).

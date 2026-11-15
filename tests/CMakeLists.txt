@@ -37,6 +37,7 @@ add_executable(ee_tests
     runtime/test_speculation.cpp
     runtime/test_spsc_queue.cpp
     runtime/test_telemetry.cpp
+    runtime/test_utf8.cpp
     translate/test_translate.cpp
     tts/test_kokoro_g2p.cpp
     tts/test_tts.cpp)
