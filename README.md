@@ -414,8 +414,10 @@ What the runs found:
   off). What steady noise still costs is mostly the recognizer's; noise suppression (RNNoise)
   would need a download.
 - **Babble** (other people talking) never lets the VAD hear silence, so utterances run to the
-  15 s cut. Endpointing on the interpreted speaker's own voice would be the fix. That would also
-  drop the other talkers' utterances.
+  15 s cut, and other talkers' speech gets translated. Neither the speaker's ECAPA voice print nor
+  their level told their utterances from the others' well enough: either would drop a third or
+  more of the speaker's own (`ml/README.md`, "Telling the speaker from the babble"). A
+  target-speaker VAD or source separation is what's needed, which means a new model.
 - **A half character from whisper** (babble made it hallucinate CJK) broke the session's JSON
   export. Fixed: whisper's words are kept valid UTF-8, and the export replaces what isn't.
 - **A looping translation crashed.** On those long garbled transcripts, the decode limit had
@@ -644,7 +646,8 @@ unpacked `libc.so` and `libm.so` linker scripts at the copy.
      natively in CI and cross-compiled (see "64-bit ARM").
 
    Next:
-   - robustness to noise ("Background noise"): endpointing in babble, then noise suppression;
+   - robustness to noise ("Background noise"): noise suppression, and a target-speaker model
+     for babble (both need a download);
    - the real engines on a Jetson (JetPack's CUDA), and Android;
    - before a release, a license for this repository and permission for, or replacements of,
      the models that limit use ([docs/licenses.md](docs/licenses.md)).

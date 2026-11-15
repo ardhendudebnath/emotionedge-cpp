@@ -694,9 +694,58 @@ each window. End to end, against the build before it (both with the language pri
   | p ≥ 0.85 | 106 | 34 |
   | p ≥ 0.95 | 64 | 42 |
 
-  Babble is speech, so a detector that hears speech better hears it too. Only the speaker's voice
-  can tell them apart: that is the next step, and it would also drop these utterances. Until then,
-  `refresh_s: 0` keeps the old behaviour in babble-heavy places.
+  Babble is speech, so a detector that hears speech better hears it too. `refresh_s: 0` keeps
+  the old behaviour in babble-heavy places.
+
+### What the prior and the second Silero state cost in latency
+
+Both add work on the critical path:
+- the engine's own language detection (a second mel spectrogram);
+- a second Silero run per 32 ms window.
+
+So they were measured in real time on the GPU, on one binary, in 5 interleaved blocks:
+- A: the defaults;
+- B: `asr.language_prior=off` and `segmenter.refresh_s=0`.
+
+Every arm waited for mains power and a quiet machine (no llama-server, load < 1.5, GPU idle).
+
+| Input | End to end p50, A / B (median of 5) | p95, A / B | ASR final p95, A / B |
+|---|---|---|---|
+| jfk.wav (4 utterances) | 324 / 324 ms | 348 / 347 ms | 43 / 53 ms |
+| 60 s of clean RAVDESS (12 utterances) | 332 / 340 ms | 430 / 421 ms | 141 / 92 ms |
+
+- **End to end: no measurable cost.** The runs' ranges overlap completely: p50 307–365 ms
+  across both arms.
+- **The ASR final's tail may be longer on RAVDESS.** A plausible cause: when the prior overrules
+  whisper and forces English, whisper is less sure of its decode and falls back to a higher
+  temperature, which decodes the final again. It is not on the critical path often enough to show
+  end to end.
+
+### Telling the speaker from the babble (negative)
+
+Can the speaker's utterances be told from the other talkers' after the fact, and the others'
+dropped before translation? Two cues were tried on the babble 20 dB run's own utterances. The
+input changes actor every 8 clips, so each actor's stretch was scored on its own: the speaker was
+enrolled from their first 3 utterances inside clips, as the runtime's VoiceGate enrols 3.
+
+| Cue | The speaker's utterances kept | The others' dropped |
+|---|---|---|
+| ECAPA voice print, cosine ≥ 0.25 (the barge-in threshold) | 0.50 | 0.79 |
+| ECAPA voice print, cosine ≥ 0.15 | 0.66 | 0.65 |
+| level (loudest 30% of frames, before the AGC), at most 12 dB under the speaker's | 0.81 | 0.35 |
+
+Neither is usable: dropping a third of the speaker's own utterances is worse than translating
+the babble.
+- **The voice print.** The speaker's utterances in babble score a median cosine of 0.25 (0.36
+  for those of 1 s or more), the others 0.05. Short fragments, babble mixed into the speaker's
+  speech, and RAVDESS's range from whispered sadness to shouted anger all pull the speaker's
+  score down. The barge-in calibration's 1.8% was for clean 1.5 s probes.
+- **The level.** The speaker's own utterances range from 18 dB under to 15 dB over the level of
+  their first three. The others' median is 10 dB under, inside that range.
+- **What would work** is a model that hears one voice in a mixture (a target-speaker VAD, or
+  separation), or a microphone that favours the speaker. Each needs a new model or hardware. Real
+  speakers vary their level less than RAVDESS's actors do, so the level cue might fare better on
+  real use, but this data can't show that.
 - **WER barely moves.** Whisper base gets most of the recovered clips wrong too, so what remains
   is the recognizer's: noise suppression or a larger model.
 - **On clean speech** nothing is lost and the endpoints hold: every utterance ends where it did,
